@@ -20,10 +20,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Install PowerShell 7
-        uses: PowerShell/PowerShell@v2
-        with:
-          version: '7.4.x'
+      - name: Check PowerShell 7
+        shell: pwsh
+        run: |
+          Write-Host "PowerShell version:"
+          $PSVersionTable
 
       - name: Run build script
         run: |
