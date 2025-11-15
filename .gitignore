@@ -4,6 +4,16 @@
 /build/output/*
 /build/VC_Redist_AIO.exe
 
+# Ignore dist binaries and packages, but allow PowerShell sources
+/dist/*.exe
+/dist/*.zip
+/dist/*.msi
+/dist/Microsoft_*
+/dist/Microsoft.*
+
+# Allow installer.ps1 to be tracked if needed (or remove to ignore it)
+#!/dist/installer.ps1
+
 # Ignore winget download cache
 winget-downloads/
 
@@ -20,6 +30,5 @@ Thumbs.db
 # Ignore VSCode workspace settings
 .vscode/
 
-# Ignore generated documentation
-dist/
+# Ignore generated documentation and artifacts
 artifact/

@@ -1,7 +1,7 @@
 {
   "input": "dist\\installer.ps1",
   "output": "dist\\VC_Redist_AIO_Offline.exe",
-  "icon": "assets\\icon.ico",
+  "icon": null,
   "requireAdmin": true,
   "noConsole": true,
   "company": "YourNameOrOrg",

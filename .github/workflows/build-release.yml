@@ -41,6 +41,21 @@ jobs:
           mkdir artifact
           Compress-Archive -Path dist\* -DestinationPath artifact\vc_redist_aio_offline.zip -Force
 
+      - name: Validate build artifacts
+        if: startsWith(github.ref, 'refs/heads/update-')
+        run: |
+          $files = @('dist/VC_Redist_AIO_Offline.exe', 'artifact/vc_redist_aio_offline.zip')
+          foreach ($f in $files) {
+            if (-not (Test-Path $f)) {
+              Write-Host "Warning: Optional artifact missing: $f" -ForegroundColor Yellow
+            }
+          }
+          if (-not (Test-Path 'artifact/vc_redist_aio_offline.zip')) {
+            Write-Error "Required artifact missing: artifact/vc_redist_aio_offline.zip"
+            exit 1
+          }
+          Write-Host "✔ All required artifacts present"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:

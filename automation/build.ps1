@@ -160,18 +160,45 @@ $icon = $cfg.icon
 $requireAdmin = $cfg.requireAdmin
 $noConsole = $cfg.noConsole
 
-# Ensure ps2exe module present on runner (install if missing)
-pwsh -Command "& {
-    if (-not (Get-Module -ListAvailable -Name ps2exe)) { Install-Module -Name ps2exe -Force -Scope CurrentUser -AllowClobber }
+# Ensure ps2exe module present and functional
+$ps2exeCheck = pwsh -Command "
+    try {
+        if (-not (Get-Module -ListAvailable -Name ps2exe)) {
+            Write-Host 'Installing ps2exe module...'
+            Install-Module -Name ps2exe -Force -Scope CurrentUser -AllowClobber -ErrorAction Stop
+        }
+        Import-Module ps2exe -ErrorAction Stop
+        Write-Host 'ps2exe ready'
+        exit 0
+    } catch {
+        Write-Error \"ps2exe setup failed: `\$_\"
+        exit 1
+    }
+"
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "Failed to initialize ps2exe. Aborting build."
+    exit 1
+}
+
+# Now invoke ps2exe with proper error handling
+$ps2exeResult = pwsh -Command "
     Import-Module ps2exe -ErrorAction Stop
-    Invoke-ps2exe -InputFile `"$inputFile`" -OutputFile `"$outputFile`" -Icon `"$icon`" -RequireAdministrator:$requireAdmin -NoConsole:$noConsole
-}"
+    Invoke-ps2exe -InputFile \"$inputFile\" -OutputFile \"$outputFile\" -Icon \"$icon\" -RequireAdministrator:\$$requireAdmin -NoConsole:\$$noConsole -ErrorAction Stop
+"
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "ps2exe conversion failed. Output: $ps2exeResult"
+    exit 1
+}
 
 # Create a SHA256 checksum for the produced EXE if present
 if (Test-Path $outputFile) {
     $hash = Get-FileHash $outputFile -Algorithm SHA256
-    $hash.String | Out-File (Join-Path (Split-Path $outputFile -Parent) ("$(Split-Path $outputFile -Leaf).sha256")) -Encoding ASCII
+    $checksumFile = Join-Path (Split-Path $outputFile -Parent) "SHA256.txt"
+    "$($hash.Hash)  $(Split-Path $outputFile -Leaf)" | Out-File $checksumFile -Encoding ASCII
     Write-Host "🔐 SHA256: $($hash.Hash)"
+    Write-Host "📄 Checksum saved to: $checksumFile"
 }
 
 Write-Host "🎉 Build completed. Output in: $OutputDir"

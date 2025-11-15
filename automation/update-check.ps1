@@ -22,23 +22,29 @@ function Invoke-WithRetry {
     for ($i = 1; $i -le $Attempts; $i++) {
         try {
             $result = & $Script
-            $code = $LASTEXITCODE
-
-            if ($code -ne 0 -or -not $result) {
-                throw "Command failed with exit code $code"
+            # Check exit code; only fail if explicitly non-zero
+            if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
+                throw "Command failed with exit code $LASTEXITCODE"
             }
-
+            # Allow empty results for HTTP calls (they may legitimately return $null)
             return $result
         } catch {
+            $msg = $_.Exception.Message
+            # Check for GitHub API rate limit (HTTP 403)
+            if ($msg -match "403|rate limit") {
+                Write-Host "⏳ GitHub API rate limit detected. Waiting 90 seconds..." -ForegroundColor Cyan
+                Start-Sleep -Seconds 90
+                continue
+            }
+
             if ($i -lt $Attempts) {
                 $wait = [math]::Min(30, $DelaySeconds * [math]::Pow(2, $i - 1))
-                # small jitter
                 $wait = $wait + (Get-Random -Minimum 0 -Maximum 3)
-                Write-Host ("Retry {0}/{1} failed: {2}. Waiting {3} seconds before retry..." -f $i, $Attempts, $_.Exception.Message, $wait)
+                Write-Host ("Retry {0}/{1} failed: {2}. Waiting {3} seconds before retry..." -f $i, $Attempts, $msg, [int]$wait)
                 Start-Sleep -Seconds $wait
             }
             else {
-                Write-Warning ("Operation failed after {0} attempts: {1}" -f $Attempts, $_.Exception.Message)
+                Write-Warning ("Operation failed after {0} attempts: {1}" -f $Attempts, $msg)
                 return $null
             }
         }
@@ -46,7 +52,7 @@ function Invoke-WithRetry {
 }
 
 # Try to locate a manifest by deterministic manifest path
-function Try-LatestVersionFromManifestPath {
+function Get-LatestVersionFromManifestPath {
     param(
         [Parameter(Mandatory = $true)]
         [string] $PackageId,
@@ -60,18 +66,66 @@ function Try-LatestVersionFromManifestPath {
 
         $vendor = $parts[0]
         $product = $parts[1]
-        $basePath = "manifests/m/$vendor/$product/$PackageId"
+        # List the vendor/product folder (avoid assuming a PackageId folder exists)
+        $parentPath = "manifests/m/$vendor/$product"
+        $parentApiUrl = "https://api.github.com/repos/microsoft/winget-pkgs/contents/$parentPath"
 
-        $apiContentsUrl = "https://api.github.com/repos/microsoft/winget-pkgs/contents/$basePath"
-        $dirList = Invoke-WithRetry -Script { Invoke-RestMethod -Uri $apiContentsUrl -Headers $Headers -ErrorAction Stop } -Attempts 3 -DelaySeconds 2
+        # Use a single attempt for the top-level listing to avoid noisy 404 retries
+        $dirList = Invoke-WithRetry -Script { Invoke-RestMethod -Uri $parentApiUrl -Headers $Headers -ErrorAction Stop } -Attempts 1 -DelaySeconds 1
         if (-not $dirList) { return $null }
 
-        # Collect version directories
-        $versions = @()
+        # Look for a direct folder matching the PackageId, or files that include the PackageId
         foreach ($item in $dirList) {
-            if ($item.type -eq 'dir') { $versions += $item.name }
-            elseif ($item.type -eq 'file' -and ($item.name -match '\.ya?ml$')) {
-                # Some manifests might be directly under the package id folder
+            if ($item.type -eq 'dir' -and $item.name -eq $PackageId) {
+                # Inspect version folders under manifests/m/vendor/product/PackageId
+                $versionDirUrl = $item.url
+                $versionFiles = Invoke-WithRetry -Script { Invoke-RestMethod -Uri $versionDirUrl -Headers $Headers -ErrorAction Stop } -Attempts 2 -DelaySeconds 1
+                if ($versionFiles) {
+                    $versions = @()
+                    foreach ($vf in $versionFiles) {
+                        if ($vf.type -eq 'dir') { $versions += $vf.name }
+                        elseif ($vf.type -eq 'file' -and ($vf.name -match '\.ya?ml$')) {
+                            $fileObj = Invoke-WithRetry -Script { Invoke-RestMethod -Uri $vf.url -Headers $Headers -ErrorAction Stop } -Attempts 2 -DelaySeconds 1
+                            if ($fileObj -and $fileObj.content) {
+                                $content = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($fileObj.content))
+                                $m = [regex]::Match($content, '^[ \t]*Version:[ \t]*(.+)$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+                                if ($m.Success) { return $m.Groups[1].Value.Trim() }
+                            }
+                        }
+                    }
+
+                    if ($versions.Count -gt 0) {
+                        $parsed = @()
+                        foreach ($v in $versions) {
+                            try { $ver = [version]$v; $parsed += @{name=$v; ver=$ver} } catch { $parsed += @{name=$v; ver=$null} }
+                        }
+                        $withVer = $parsed | Where-Object { $null -ne $_.ver } | Sort-Object -Property ver -Descending
+                        $chosen = if ($withVer.Count -gt 0) { $withVer[0].name } else { ($versions | Sort-Object -Descending)[0] }
+
+                        $versionPath = "manifests/m/$vendor/$product/$PackageId/$chosen"
+                        $versionContentsUrl = "https://api.github.com/repos/microsoft/winget-pkgs/contents/$versionPath"
+                        $versionFiles = Invoke-WithRetry -Script { Invoke-RestMethod -Uri $versionContentsUrl -Headers $Headers -ErrorAction Stop } -Attempts 2 -DelaySeconds 1
+                        if ($versionFiles) {
+                            foreach ($f in $versionFiles) {
+                                if ($f.type -eq 'file' -and ($f.name -match '\.ya?ml$')) {
+                                    $fileObj = Invoke-WithRetry -Script { Invoke-RestMethod -Uri $f.url -Headers $Headers -ErrorAction Stop } -Attempts 2 -DelaySeconds 1
+                                    if ($fileObj -and $fileObj.content) {
+                                        $content = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($fileObj.content))
+                                        $regexes = @( '^[ \t]*Version:[ \t]*(.+)$', '^[ \t]*PackageVersion:[ \t]*(.+)$', '^[ \t]*packageVersion:[ \t]*(.+)$' )
+                                        foreach ($r in $regexes) {
+                                            $m = [regex]::Match($content, $r, [System.Text.RegularExpressions.RegexOptions]::Multiline)
+                                            if ($m.Success) { return $m.Groups[1].Value.Trim() }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            # If filename contains the PackageId directly, try extracting version from that file
+            if ($item.type -eq 'file' -and ($item.name -match "$([regex]::Escape($PackageId)).*\.ya?ml$")) {
                 $fileObj = Invoke-WithRetry -Script { Invoke-RestMethod -Uri $item.url -Headers $Headers -ErrorAction Stop } -Attempts 2 -DelaySeconds 1
                 if ($fileObj -and $fileObj.content) {
                     $content = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($fileObj.content))
@@ -79,36 +133,28 @@ function Try-LatestVersionFromManifestPath {
                     if ($m.Success) { return $m.Groups[1].Value.Trim() }
                 }
             }
-        }
 
-        if ($versions.Count -eq 0) { return $null }
-
-        # Pick candidate version: prefer semantic parse then fallback to lexical
-        $parsed = @()
-        foreach ($v in $versions) {
-            try { $ver = [version]$v; $parsed += @{name=$v; ver=$ver} } catch { $parsed += @{name=$v; ver=$null} }
-        }
-
-        $chosen = $null
-        $withVer = $parsed | Where-Object { $_.ver -ne $null } | Sort-Object -Property ver -Descending
-        if ($withVer.Count -gt 0) { $chosen = $withVer[0].name } else { $chosen = ($versions | Sort-Object -Descending)[0] }
-
-        # Fetch YAML inside chosen version folder
-        $versionPath = "$basePath/$chosen"
-        $versionContentsUrl = "https://api.github.com/repos/microsoft/winget-pkgs/contents/$versionPath"
-        $versionFiles = Invoke-WithRetry -Script { Invoke-RestMethod -Uri $versionContentsUrl -Headers $Headers -ErrorAction Stop } -Attempts 2 -DelaySeconds 1
-        if ($versionFiles) {
-            foreach ($f in $versionFiles) {
-                if ($f.type -eq 'file' -and ($f.name -match '\.ya?ml$')) {
-                    $fileObj = Invoke-WithRetry -Script { Invoke-RestMethod -Uri $f.url -Headers $Headers -ErrorAction Stop } -Attempts 2 -DelaySeconds 1
-                    if ($fileObj -and $fileObj.content) {
-                        $content = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($fileObj.content))
-                        $regexes = @( '^[ \t]*Version:[ \t]*(.+)$', '^[ \t]*PackageVersion:[ \t]*(.+)$', '^[ \t]*packageVersion:[ \t]*(.+)$' )
-                        foreach ($r in $regexes) {
-                            $m = [regex]::Match($content, $r, [System.Text.RegularExpressions.RegexOptions]::Multiline)
-                            if ($m.Success) { return $m.Groups[1].Value.Trim() }
+            # Try scanning reasonable subdirectories quickly for YAML that mentions the PackageId
+            if ($item.type -eq 'dir') {
+                try {
+                    $subList = Invoke-WithRetry -Script { Invoke-RestMethod -Uri $item.url -Headers $Headers -ErrorAction Stop } -Attempts 1 -DelaySeconds 1
+                    foreach ($sub in $subList | Where-Object { $_.type -eq 'dir' }) {
+                        $maybeFiles = Invoke-WithRetry -Script { Invoke-RestMethod -Uri $sub.url -Headers $Headers -ErrorAction Stop } -Attempts 1 -DelaySeconds 1
+                        if ($maybeFiles) {
+                            foreach ($f2 in $maybeFiles | Where-Object { $_.type -eq 'file' -and ($_.name -match '\.ya?ml$') }) {
+                                $fileObj = Invoke-WithRetry -Script { Invoke-RestMethod -Uri $f2.url -Headers $Headers -ErrorAction Stop } -Attempts 1 -DelaySeconds 1
+                                if ($fileObj -and $fileObj.content) {
+                                    $content = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($fileObj.content))
+                                    foreach ($r in @('^[ \t]*Version:[ \t]*(.+)$','^[ \t]*PackageVersion:[ \t]*(.+)$','^[ \t]*packageVersion:[ \t]*(.+)$')) {
+                                        $m = [regex]::Match($content, $r, [System.Text.RegularExpressions.RegexOptions]::Multiline)
+                                        if ($m.Success) { return $m.Groups[1].Value.Trim() }
+                                    }
+                                }
+                            }
                         }
                     }
+                } catch {
+                    # ignore and continue
                 }
             }
         }
@@ -159,7 +205,9 @@ function Search-ManifestForPackage {
                     $fileObj = Invoke-WithRetry -Script { Invoke-RestMethod -Uri $entry.url -Headers $Headers -ErrorAction Stop } -Attempts 2 -DelaySeconds 1
                     if ($fileObj -and $fileObj.content) {
                         $content = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($fileObj.content))
-                        if ($content -match "^\s*Id:\s*$PackageId" -or $content -match "Id:\s*`"$PackageId`"") {
+                        $escaped = [regex]::Escape($PackageId)
+                        # Match: Id: <PackageId> (with whitespace flexibility)
+                        if ($content -match ("^\s+Id:\s+" + $escaped)) {
                             return $entry
                         }
                     }
@@ -187,7 +235,7 @@ function Get-LatestVersionFromRepo {
     if ($token) { $headers.Authorization = "token $token" }
 
     # Try deterministic manifest-path lookup first
-    $pathResult = Try-LatestVersionFromManifestPath -PackageId $PackageId -Headers $headers
+    $pathResult = Get-LatestVersionFromManifestPath -PackageId $PackageId -Headers $headers
     if ($pathResult) { return $pathResult }
 
     # If not found at the exact manifest path, attempt a recursive search under vendor/product
@@ -289,8 +337,14 @@ foreach ($pkg in $packages.packages) {
     }
 
     if (-not $latestVersion) {
+        if ($UseWingetRepo) {
+            Write-Host "⚠ No manifest found in winget-pkgs for $($pkg.id) and winget fallback disabled by -UseWingetRepo; skipping."
+            continue
+        }
+
         # Query latest version in Winget using JSON output (more robust than parsing localized text)
-        $showJson = Invoke-WithRetry -Script { & winget show --id $($pkg.id) --exact --source winget --accept-source-agreements --accept-package-agreements --output json 2>$null } -Attempts 4 -DelaySeconds 2
+        # Use 2 attempts with reasonable delays for transient network issues
+        $showJson = Invoke-WithRetry -Script { & winget show --id $($pkg.id) --exact --source winget --accept-source-agreements --accept-package-agreements --output json 2>$null } -Attempts 2 -DelaySeconds 2
         if (-not $showJson) {
             Write-Warning "⚠ winget show failed for: $($pkg.id) after retries"
             continue
