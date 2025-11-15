@@ -7,6 +7,8 @@ param(
 
     [Parameter(Mandatory = $true)]
     [string] $PSEXEPath
+    ,
+    [switch] $UseWingetRepo
 )
 
 Write-Host "📦 Starting offline build process..."
@@ -31,9 +33,79 @@ foreach ($pkg in $packages.packages) {
     }
 
     Write-Host "`n➡ Downloading $($pkg.id) $($pkg.version)"
-
-    # Winget download command
     $downloadDir = Join-Path $OutputDir $pkg.id.Replace(".", "_")
+
+    if ($UseWingetRepo) {
+        Write-Host "ℹ Attempting to extract installer URLs from winget-pkgs repo"
+
+        function Get-InstallerUrlsFromRepo {
+            param(
+                [Parameter(Mandatory = $true)]
+                [string] $PackageId,
+                [Parameter(Mandatory = $true)]
+                [string] $Version
+            )
+
+            $token = $env:GITHUB_TOKEN
+            $headers = @{ 'User-Agent' = 'vcredist-aio' }
+            if ($token) { $headers.Authorization = "token $token" }
+
+            $q = [System.Uri]::EscapeDataString($PackageId)
+            $searchUrl = "https://api.github.com/search/code?q=repo:microsoft/winget-pkgs+$q+in:path"
+
+            try {
+                $search = Invoke-RestMethod -Uri $searchUrl -Headers $headers -ErrorAction Stop
+                if (-not $search -or -not $search.items -or $search.total_count -lt 1) { return @() }
+
+                $fileApiUrl = $search.items[0].url
+                $fileObj = Invoke-RestMethod -Uri $fileApiUrl -Headers $headers -ErrorAction Stop
+                if (-not $fileObj.content) { return @() }
+
+                $content = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($fileObj.content))
+
+                # Find Installer Urls under Installers: blocks
+                $urls = @()
+                $matches = [regex]::Matches($content, '^[ \t]*Url:[ \t]*(.+)$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+                foreach ($m in $matches) { $urls += $m.Groups[1].Value.Trim() }
+
+                # Filter by version if present nearby (best-effort)
+                if ($Version -and $urls.Count -gt 0) {
+                    return $urls
+                }
+
+                return $urls
+            } catch {
+                Write-Host "⚠ Repo installer lookup failed for $PackageId: $($_.Exception.Message)" -ForegroundColor Yellow
+                return @()
+            }
+        }
+
+        $urls = Get-InstallerUrlsFromRepo -PackageId $pkg.id -Version $pkg.version
+        if ($urls -and $urls.Count -gt 0) {
+            New-Item -ItemType Directory -Path $downloadDir -Force | Out-Null
+            foreach ($u in $urls) {
+                try {
+                    $fileName = [System.IO.Path]::GetFileName([Uri]$u).Trim()
+                    if ([string]::IsNullOrWhiteSpace($fileName)) {
+                        $fileName = "installer_$(Get-Random).bin"
+                    }
+                    $outPath = Join-Path $downloadDir $fileName
+                    Write-Host "→ Downloading $u → $outPath"
+                    Invoke-WebRequest -Uri $u -OutFile $outPath -UseBasicParsing -ErrorAction Stop
+                } catch {
+                    Write-Warning "⚠ Failed to download $u: $($_.Exception.Message)"
+                }
+            }
+            Write-Host "✔ Downloaded manifest installers to: $downloadDir"
+            continue
+        }
+        else {
+            Write-Host "ℹ Repo did not provide installer URLs for $($pkg.id); falling back to winget download"
+        }
+    }
+
+    # Winget download command (fallback)
+    New-Item -ItemType Directory -Path $downloadDir -Force | Out-Null
 
     & winget download `
         --id $pkg.id `

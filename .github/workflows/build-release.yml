@@ -27,11 +27,14 @@ jobs:
           $PSVersionTable
 
       - name: Run build script
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           pwsh -File automation/build.ps1 `
             -PackagesFile packages.json `
             -OutputDir dist `
-            -PSEXEPath powershell-to-exe.json
+            -PSEXEPath powershell-to-exe.json `
+            -UseWingetRepo
 
       - name: Archive offline installer
         run: |

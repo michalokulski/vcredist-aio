@@ -26,10 +26,13 @@ jobs:
           $PSVersionTable
 
       - name: Run update check script
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           pwsh -File automation/update-check.ps1 `
             -PackagesFile packages.json `
-            -UpdateBranchPrefix update
+            -UpdateBranchPrefix update `
+            -UseWingetRepo
 
       - name: Push update branch if exists
         if: success()
