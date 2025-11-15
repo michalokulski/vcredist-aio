@@ -45,6 +45,80 @@ function Invoke-WithRetry {
     }
 }
 
+# Try to locate a manifest by deterministic manifest path
+function Try-LatestVersionFromManifestPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $PackageId,
+        [Parameter(Mandatory = $true)]
+        [hashtable] $Headers
+    )
+
+    try {
+        $parts = $PackageId -split '\.'
+        if ($parts.Length -lt 2) { return $null }
+
+        $vendor = $parts[0]
+        $product = $parts[1]
+        $basePath = "manifests/m/$vendor/$product/$PackageId"
+
+        $apiContentsUrl = "https://api.github.com/repos/microsoft/winget-pkgs/contents/$basePath"
+        $dirList = Invoke-WithRetry -Script { Invoke-RestMethod -Uri $apiContentsUrl -Headers $Headers -ErrorAction Stop } -Attempts 3 -DelaySeconds 2
+        if (-not $dirList) { return $null }
+
+        # Collect version directories
+        $versions = @()
+        foreach ($item in $dirList) {
+            if ($item.type -eq 'dir') { $versions += $item.name }
+            elseif ($item.type -eq 'file' -and ($item.name -match '\.ya?ml$')) {
+                # Some manifests might be directly under the package id folder
+                $fileObj = Invoke-WithRetry -Script { Invoke-RestMethod -Uri $item.url -Headers $Headers -ErrorAction Stop } -Attempts 2 -DelaySeconds 1
+                if ($fileObj -and $fileObj.content) {
+                    $content = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($fileObj.content))
+                    $m = [regex]::Match($content, '^[ \t]*Version:[ \t]*(.+)$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+                    if ($m.Success) { return $m.Groups[1].Value.Trim() }
+                }
+            }
+        }
+
+        if ($versions.Count -eq 0) { return $null }
+
+        # Pick candidate version: prefer semantic parse then fallback to lexical
+        $parsed = @()
+        foreach ($v in $versions) {
+            try { $ver = [version]$v; $parsed += @{name=$v; ver=$ver} } catch { $parsed += @{name=$v; ver=$null} }
+        }
+
+        $chosen = $null
+        $withVer = $parsed | Where-Object { $_.ver -ne $null } | Sort-Object -Property ver -Descending
+        if ($withVer.Count -gt 0) { $chosen = $withVer[0].name } else { $chosen = ($versions | Sort-Object -Descending)[0] }
+
+        # Fetch YAML inside chosen version folder
+        $versionPath = "$basePath/$chosen"
+        $versionContentsUrl = "https://api.github.com/repos/microsoft/winget-pkgs/contents/$versionPath"
+        $versionFiles = Invoke-WithRetry -Script { Invoke-RestMethod -Uri $versionContentsUrl -Headers $Headers -ErrorAction Stop } -Attempts 2 -DelaySeconds 1
+        if ($versionFiles) {
+            foreach ($f in $versionFiles) {
+                if ($f.type -eq 'file' -and ($f.name -match '\.ya?ml$')) {
+                    $fileObj = Invoke-WithRetry -Script { Invoke-RestMethod -Uri $f.url -Headers $Headers -ErrorAction Stop } -Attempts 2 -DelaySeconds 1
+                    if ($fileObj -and $fileObj.content) {
+                        $content = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($fileObj.content))
+                        $regexes = @( '^[ \t]*Version:[ \t]*(.+)$', '^[ \t]*PackageVersion:[ \t]*(.+)$', '^[ \t]*packageVersion:[ \t]*(.+)$' )
+                        foreach ($r in $regexes) {
+                            $m = [regex]::Match($content, $r, [System.Text.RegularExpressions.RegexOptions]::Multiline)
+                            if ($m.Success) { return $m.Groups[1].Value.Trim() }
+                        }
+                    }
+                }
+            }
+        }
+
+        return $null
+    } catch {
+        return $null
+    }
+}
+
 # Try to get the latest version from the microsoft/winget-pkgs repository on GitHub
 function Get-LatestVersionFromRepo {
     param(
@@ -56,29 +130,45 @@ function Get-LatestVersionFromRepo {
     $headers = @{ 'User-Agent' = 'vcredist-aio' }
     if ($token) { $headers.Authorization = "token $token" }
 
-    $q = [System.Uri]::EscapeDataString($PackageId)
-    $searchUrl = "https://api.github.com/search/code?q=repo:microsoft/winget-pkgs+$q+in:path"
+    # Try deterministic manifest-path lookup first
+    $pathResult = Try-LatestVersionFromManifestPath -PackageId $PackageId -Headers $headers
+    if ($pathResult) { return $pathResult }
+
+    # First, try searching for the exact Id: <PackageId> inside files (more reliable for manifests)
+    $q = [System.Uri]::EscapeDataString("Id: $PackageId")
+    $searchUrl = "https://api.github.com/search/code?q=repo:microsoft/winget-pkgs+$q+in:file"
 
     try {
         $search = Invoke-WithRetry -Script { Invoke-RestMethod -Uri $searchUrl -Headers $headers -ErrorAction Stop } -Attempts 3 -DelaySeconds 2
-        if (-not $search -or -not $search.items -or $search.total_count -lt 1) { return $null }
+        if ($search -and $search.items -and $search.total_count -ge 1) {
+            # Prefer the first matching file
+            $fileApiUrl = $search.items[0].url
+            $fileObj = Invoke-WithRetry -Script { Invoke-RestMethod -Uri $fileApiUrl -Headers $headers -ErrorAction Stop } -Attempts 3 -DelaySeconds 2
+            if ($fileObj -and $fileObj.content) {
+                $content = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($fileObj.content))
+                $regexes = @( '^[ \t]*Version:[ \t]*(.+)$', '^[ \t]*PackageVersion:[ \t]*(.+)$', '^[ \t]*packageVersion:[ \t]*(.+)$' )
+                foreach ($r in $regexes) {
+                    $m = [regex]::Match($content, $r, [System.Text.RegularExpressions.RegexOptions]::Multiline)
+                    if ($m.Success) { return $m.Groups[1].Value.Trim() }
+                }
+            }
+        }
 
-        $fileApiUrl = $search.items[0].url
-        $fileObj = Invoke-WithRetry -Script { Invoke-RestMethod -Uri $fileApiUrl -Headers $headers -ErrorAction Stop } -Attempts 3 -DelaySeconds 2
-
-        if (-not $fileObj.content) { return $null }
-
-        $content = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($fileObj.content))
-
-        $regexes = @(
-            '^[ \t]*Version:[ \t]*(.+)$',
-            '^[ \t]*PackageVersion:[ \t]*(.+)$',
-            '^[ \t]*packageVersion:[ \t]*(.+)$'
-        )
-
-        foreach ($r in $regexes) {
-            $m = [regex]::Match($content, $r, [System.Text.RegularExpressions.RegexOptions]::Multiline)
-            if ($m.Success) { return $m.Groups[1].Value.Trim() }
+        # Fallback: search by path/name (older approach) if the above didn't yield results
+        $q2 = [System.Uri]::EscapeDataString($PackageId)
+        $searchUrl2 = "https://api.github.com/search/code?q=repo:microsoft/winget-pkgs+$q2+in:path"
+        $search2 = Invoke-WithRetry -Script { Invoke-RestMethod -Uri $searchUrl2 -Headers $headers -ErrorAction Stop } -Attempts 2 -DelaySeconds 2
+        if ($search2 -and $search2.items -and $search2.total_count -ge 1) {
+            $fileApiUrl = $search2.items[0].url
+            $fileObj = Invoke-WithRetry -Script { Invoke-RestMethod -Uri $fileApiUrl -Headers $headers -ErrorAction Stop } -Attempts 2 -DelaySeconds 2
+            if ($fileObj -and $fileObj.content) {
+                $content = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($fileObj.content))
+                $regexes = @( '^[ \t]*Version:[ \t]*(.+)$', '^[ \t]*PackageVersion:[ \t]*(.+)$', '^[ \t]*packageVersion:[ \t]*(.+)$' )
+                foreach ($r in $regexes) {
+                    $m = [regex]::Match($content, $r, [System.Text.RegularExpressions.RegexOptions]::Multiline)
+                    if ($m.Success) { return $m.Groups[1].Value.Trim() }
+                }
+            }
         }
 
         return $null

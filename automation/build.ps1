@@ -75,7 +75,7 @@ foreach ($pkg in $packages.packages) {
 
                 return $urls
             } catch {
-                Write-Host "⚠ Repo installer lookup failed for $PackageId: $($_.Exception.Message)" -ForegroundColor Yellow
+                Write-Host ("⚠ Repo installer lookup failed for {0}: {1}" -f $PackageId, $_.Exception.Message) -ForegroundColor Yellow
                 return @()
             }
         }
@@ -93,7 +93,7 @@ foreach ($pkg in $packages.packages) {
                     Write-Host "→ Downloading $u → $outPath"
                     Invoke-WebRequest -Uri $u -OutFile $outPath -UseBasicParsing -ErrorAction Stop
                 } catch {
-                    Write-Warning "⚠ Failed to download $u: $($_.Exception.Message)"
+                    Write-Warning ("⚠ Failed to download {0}: {1}" -f $u, $_.Exception.Message)
                 }
             }
             Write-Host "✔ Downloaded manifest installers to: $downloadDir"
