@@ -1,0 +1,17 @@
+{
+  "input": "dist\\installer.ps1",
+  "output": "dist\\VC_Redist_AIO_Offline.exe",
+  "icon": "assets\\icon.ico",
+  "requireAdmin": true,
+  "noConsole": true,
+  "company": "YourNameOrOrg",
+  "description": "Offline installer for all Microsoft Visual C++ Redistributables",
+  "productName": "VC Redist AIO Offline",
+  "fileVersion": "1.0.0.0",
+  "productVersion": "1.0.0.0",
+  "copyright": "(c) 2025",
+  "invisible": true,
+  "singleFile": true,
+  "supportOS": "x86+x64",
+  "temporaryDirectory": "temp"
+}

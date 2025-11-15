@@ -1,0 +1,25 @@
+# Ignore build output
+/build/*.exe
+/build/*.zip
+/build/output/*
+/build/VC_Redist_AIO.exe
+
+# Ignore winget download cache
+winget-downloads/
+
+# Ignore PowerShell temp extraction directory
+temp-extract/
+
+# Ignore typical editor/OS files
+*.log
+*.tmp
+*.bak
+*.DS_Store
+Thumbs.db
+
+# Ignore VSCode workspace settings
+.vscode/
+
+# Ignore generated documentation
+dist/
+artifact/

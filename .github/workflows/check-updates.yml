@@ -1,0 +1,51 @@
+name: Check for Winget Updates
+
+on:
+  schedule:
+    - cron: "0 2 * * *"   # daily at 02:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Install PowerShell 7
+        uses: PowerShell/PowerShell@v2
+        with:
+          version: '7.4.x'
+
+      - name: Run update check script
+        run: |
+          pwsh -File automation/update-check.ps1 `
+            -PackagesFile packages.json `
+            -UpdateBranchPrefix update
+
+      - name: Push update branch if exists
+        if: success()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+
+          if (Test-Path update-branch.txt) {
+            $branch = Get-Content update-branch.txt
+
+            git checkout -b $branch
+            git add packages.json
+            git commit -m "Automated update: $branch"
+            # Use the GITHUB_TOKEN for an authenticated push
+            $repo = $env:GITHUB_REPOSITORY
+            $url = "https://x-access-token:$env:GITHUB_TOKEN@github.com/$repo.git"
+            git push $url HEAD:refs/heads/$branch
+          }

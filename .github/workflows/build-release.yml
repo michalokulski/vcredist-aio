@@ -1,0 +1,80 @@
+name: Build Offline VCRedist AIO
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - update-**
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Install PowerShell 7
+        uses: PowerShell/PowerShell@v2
+        with:
+          version: '7.4.x'
+
+      - name: Run build script
+        run: |
+          pwsh -File automation/build.ps1 `
+            -PackagesFile packages.json `
+            -OutputDir dist `
+            -PSEXEPath powershell-to-exe.json
+
+      - name: Archive offline installer
+        run: |
+          mkdir artifact
+          Compress-Archive -Path dist\* -DestinationPath artifact\vc_redist_aio_offline.zip -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vc_redist_aio_offline
+          path: artifact/vc_redist_aio_offline.zip
+
+      - name: Compute SHA256
+        if: startsWith(github.ref, 'refs/heads/update-')
+        id: compute-sha
+        run: |
+          $file = 'artifact\vc_redist_aio_offline.zip'
+          if (-not (Test-Path $file)) {
+            Write-Error "Artifact not found: $file"
+            exit 1
+          }
+          $sha = (Get-FileHash -Algorithm SHA256 $file).Hash
+          Write-Host "Computed SHA256: $sha"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "sha=$sha"
+
+      - name: Create release
+        if: startsWith(github.ref, 'refs/heads/update-')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "VC Redist AIO Offline - ${{ github.ref_name }}"
+          body: |
+            VC Redist AIO Offline build for ${{ github.ref_name }}
+
+            SHA256: ${{ steps.compute-sha.outputs.sha }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload release asset
+        if: startsWith(github.ref, 'refs/heads/update-')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifact/vc_redist_aio_offline.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
