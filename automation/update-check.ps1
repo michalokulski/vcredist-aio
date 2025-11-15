@@ -119,6 +119,62 @@ function Try-LatestVersionFromManifestPath {
     }
 }
 
+# Recursively search under manifests/m/<vendor>/<product> for a manifest file matching the PackageId
+function Search-ManifestForPackage {
+    param(
+        [Parameter(Mandatory=$true)][string] $Vendor,
+        [Parameter(Mandatory=$true)][string] $Product,
+        [Parameter(Mandatory=$true)][string] $PackageId,
+        [Parameter(Mandatory=$true)][hashtable] $Headers,
+        [int] $MaxDepth = 6
+    )
+
+    $startPath = "manifests/m/$Vendor/$Product"
+    $queue = @([pscustomobject]@{ path = $startPath; depth = 0 })
+
+    while ($queue.Count -gt 0) {
+        $item = $queue[0]
+        $queue = $queue[1..($queue.Count-1)]
+
+        if ($item.depth -gt $MaxDepth) { continue }
+
+        $apiUrl = "https://api.github.com/repos/microsoft/winget-pkgs/contents/$($item.path)"
+        try {
+            $list = Invoke-WithRetry -Script { Invoke-RestMethod -Uri $apiUrl -Headers $Headers -ErrorAction Stop } -Attempts 2 -DelaySeconds 1
+        } catch {
+            continue
+        }
+
+        if (-not $list) { continue }
+
+        foreach ($entry in $list) {
+            if ($entry.type -eq 'file') {
+                # Quick filename match
+                if ($entry.name -like "*$PackageId*.yaml" -or $entry.name -like "*$PackageId*.yml") {
+                    return $entry
+                }
+
+                # Otherwise fetch small files and check content for Id: <PackageId>
+                try {
+                    $fileObj = Invoke-WithRetry -Script { Invoke-RestMethod -Uri $entry.url -Headers $Headers -ErrorAction Stop } -Attempts 2 -DelaySeconds 1
+                    if ($fileObj -and $fileObj.content) {
+                        $content = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($fileObj.content))
+                        if ($content -match "^\s*Id:\s*$PackageId" -or $content -match "Id:\s*`"$PackageId`"") {
+                            return $entry
+                        }
+                    }
+                } catch {
+                    # ignore per-file fetch errors
+                }
+            } elseif ($entry.type -eq 'dir') {
+                $queue += [pscustomobject]@{ path = $entry.path; depth = $item.depth + 1 }
+            }
+        }
+    }
+
+    return $null
+}
+
 # Try to get the latest version from the microsoft/winget-pkgs repository on GitHub
 function Get-LatestVersionFromRepo {
     param(
@@ -133,6 +189,39 @@ function Get-LatestVersionFromRepo {
     # Try deterministic manifest-path lookup first
     $pathResult = Try-LatestVersionFromManifestPath -PackageId $PackageId -Headers $headers
     if ($pathResult) { return $pathResult }
+
+    # If not found at the exact manifest path, attempt a recursive search under vendor/product
+    try {
+        $parts = $PackageId -split '\.'
+        if ($parts.Length -ge 2) {
+            $vendor = $parts[0]
+            $product = $parts[1]
+            $found = Search-ManifestForPackage -Vendor $vendor -Product $product -PackageId $PackageId -Headers $headers -MaxDepth 6
+            if ($found) {
+                # fetch the file and extract version from content or path
+                $fileObj = Invoke-WithRetry -Script { Invoke-RestMethod -Uri $found.url -Headers $headers -ErrorAction Stop } -Attempts 2 -DelaySeconds 1
+                if ($fileObj -and $fileObj.content) {
+                    $content = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($fileObj.content))
+                    $regexes = @( '^[ \t]*Version:[ \t]*(.+)$', '^[ \t]*PackageVersion:[ \t]*(.+)$', '^[ \t]*packageVersion:[ \t]*(.+)$' )
+                    foreach ($r in $regexes) {
+                        $m = [regex]::Match($content, $r, [System.Text.RegularExpressions.RegexOptions]::Multiline)
+                        if ($m.Success) { return $m.Groups[1].Value.Trim() }
+                    }
+
+                    # Try to derive version from the path segments if content lacks it
+                    $segments = $found.path -split '/'
+                    # common layout: manifests/m/Vendor/Product/<year>/<arch>/<version>/<file>
+                    if ($segments.Length -ge 5) {
+                        # version is often the second-to-last segment
+                        $candidate = $segments[-2]
+                        if (-not [string]::IsNullOrWhiteSpace($candidate)) { return $candidate }
+                    }
+                }
+            }
+        }
+    } catch {
+        # continue to other strategies
+    }
 
     # First, try searching for the exact Id: <PackageId> inside files (more reliable for manifests)
     $q = [System.Uri]::EscapeDataString("Id: $PackageId")
