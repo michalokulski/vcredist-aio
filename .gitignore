@@ -1,34 +1,36 @@
 # Ignore build output
-/build/*.exe
-/build/*.zip
-/build/output/*
-/build/VC_Redist_AIO.exe
+dist/*.exe
+dist/*.zip
+dist/*.msi
+dist/SHA256.txt
+dist/downloads/
+dist/packages/
 
-# Ignore dist binaries and packages, but allow PowerShell sources
-/dist/*.exe
-/dist/*.zip
-/dist/*.msi
-/dist/Microsoft_*
-/dist/Microsoft.*
+build/*.exe
+build/*.zip
+output/
 
-# Allow installer.ps1 to be tracked if needed (or remove to ignore it)
-#!/dist/installer.ps1
-
-# Ignore winget download cache
-winget-downloads/
-
-# Ignore PowerShell temp extraction directory
+# Ignore package extraction
+Microsoft_*/
+Microsoft.*/
+temp/
 temp-extract/
 
-# Ignore typical editor/OS files
+# Ignore artifact staging
+artifact/
+
+# Ignore PowerShell temp and cache
 *.log
 *.tmp
 *.bak
-*.DS_Store
+
+# Ignore OS files
+.DS_Store
 Thumbs.db
 
-# Ignore VSCode workspace settings
+# Ignore editor config
 .vscode/
+.idea/
 
-# Ignore generated documentation and artifacts
-artifact/
+# Ignore git helper files
+update-branch.txt

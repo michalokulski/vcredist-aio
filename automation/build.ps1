@@ -7,160 +7,195 @@ param(
 
     [Parameter(Mandatory = $true)]
     [string] $PSEXEPath
-    ,
-    [switch] $UseWingetRepo
 )
 
-Write-Host "📦 Starting offline build process..."
+$ErrorActionPreference = "Stop"
 
-# Ensure output directory exists
-if (Test-Path $OutputDir) {
-    Remove-Item -Recurse -Force $OutputDir
+function Invoke-WithRetry {
+    param(
+        [Parameter(Mandatory = $true)]
+        [scriptblock] $Script,
+        [int] $Attempts = 3,
+        [int] $DelaySeconds = 2
+    )
+
+    for ($i = 1; $i -le $Attempts; $i++) {
+        try {
+            $result = & $Script
+            if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
+                throw "Command failed with exit code $LASTEXITCODE"
+            }
+            return $result
+        } catch {
+            if ($i -lt $Attempts) {
+                $wait = [math]::Min(30, $DelaySeconds * [math]::Pow(2, $i - 1))
+                $wait = $wait + (Get-Random -Minimum 0 -Maximum 3)
+                Write-Host ("Retry {0}/{1} failed: {2}. Waiting {3} seconds before retry..." -f $i, $Attempts, $_.Exception.Message, [int]$wait)
+                Start-Sleep -Seconds $wait
+            }
+            else {
+                Write-Warning ("Operation failed after {0} attempts: {1}" -f $Attempts, $_.Exception.Message)
+                return $null
+            }
+        }
+    }
 }
-New-Item -ItemType Directory -Path $OutputDir | Out-Null
 
+Write-Host "🚀 Building VCRedist AIO Offline Installer..." -ForegroundColor Cyan
 
-# Load packages list
-$packages = Get-Content $PackagesFile -Raw | ConvertFrom-Json
+# Load packages
+$packagesJson = Get-Content $PackagesFile -Raw | ConvertFrom-Json
+$packages = $packagesJson.packages
 
-Write-Host "📥 Downloading packages via winget..."
+# Create output directory
+New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 
-foreach ($pkg in $packages.packages) {
+# Create temporary download directory
+$downloadDir = Join-Path $OutputDir "downloads"
+New-Item -ItemType Directory -Path $downloadDir -Force | Out-Null
+
+Write-Host "📥 Downloading VCRedist packages..." -ForegroundColor Cyan
+
+$failedDownloads = @()
+
+foreach ($pkg in $packages) {
+    Write-Host "`n➡ Processing: $($pkg.id)"
 
     if ([string]::IsNullOrWhiteSpace($pkg.version)) {
-        Write-Warning "⚠ Package '$($pkg.id)' has no version assigned — skipping"
+        Write-Warning "⚠ No version specified for $($pkg.id), skipping..."
         continue
     }
 
-    Write-Host "`n➡ Downloading $($pkg.id) $($pkg.version)"
-    $downloadDir = Join-Path $OutputDir $pkg.id.Replace(".", "_")
+    Write-Host "  Version: $($pkg.version)"
 
-    if ($UseWingetRepo) {
-        Write-Host "ℹ Attempting to extract installer URLs from winget-pkgs repo"
-
-        function Get-InstallerUrlsFromRepo {
-            param(
-                [Parameter(Mandatory = $true)]
-                [string] $PackageId,
-                [Parameter(Mandatory = $true)]
-                [string] $Version
-            )
-
-            $token = $env:GITHUB_TOKEN
-            $headers = @{ 'User-Agent' = 'vcredist-aio' }
-            if ($token) { $headers.Authorization = "token $token" }
-
-            $q = [System.Uri]::EscapeDataString($PackageId)
-            $searchUrl = "https://api.github.com/search/code?q=repo:microsoft/winget-pkgs+$q+in:path"
-
-            try {
-                $search = Invoke-RestMethod -Uri $searchUrl -Headers $headers -ErrorAction Stop
-                if (-not $search -or -not $search.items -or $search.total_count -lt 1) { return @() }
-
-                $fileApiUrl = $search.items[0].url
-                $fileObj = Invoke-RestMethod -Uri $fileApiUrl -Headers $headers -ErrorAction Stop
-                if (-not $fileObj.content) { return @() }
-
-                $content = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($fileObj.content))
-
-                # Find Installer Urls under Installers: blocks
-                $urls = @()
-                $matches = [regex]::Matches($content, '^[ \t]*Url:[ \t]*(.+)$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
-                foreach ($m in $matches) { $urls += $m.Groups[1].Value.Trim() }
-
-                # Filter by version if present nearby (best-effort)
-                if ($Version -and $urls.Count -gt 0) {
-                    return $urls
-                }
-
-                return $urls
-            } catch {
-                Write-Host ("⚠ Repo installer lookup failed for {0}: {1}" -f $PackageId, $_.Exception.Message) -ForegroundColor Yellow
-                return @()
-            }
-        }
-
-        $urls = Get-InstallerUrlsFromRepo -PackageId $pkg.id -Version $pkg.version
-        if ($urls -and $urls.Count -gt 0) {
-            New-Item -ItemType Directory -Path $downloadDir -Force | Out-Null
-            foreach ($u in $urls) {
-                try {
-                    $fileName = [System.IO.Path]::GetFileName([Uri]$u).Trim()
-                    if ([string]::IsNullOrWhiteSpace($fileName)) {
-                        $fileName = "installer_$(Get-Random).bin"
-                    }
-                    $outPath = Join-Path $downloadDir $fileName
-                    Write-Host "→ Downloading $u → $outPath"
-                    Invoke-WebRequest -Uri $u -OutFile $outPath -UseBasicParsing -ErrorAction Stop
-                } catch {
-                    Write-Warning ("⚠ Failed to download {0}: {1}" -f $u, $_.Exception.Message)
-                }
-            }
-            Write-Host "✔ Downloaded manifest installers to: $downloadDir"
-            continue
-        }
-        else {
-            Write-Host "ℹ Repo did not provide installer URLs for $($pkg.id); falling back to winget download"
-        }
-    }
-
-    # Winget download command (fallback)
-    New-Item -ItemType Directory -Path $downloadDir -Force | Out-Null
-
-    & winget download `
-        --id $pkg.id `
-        --version $pkg.version `
-        --source winget `
-        --accept-source-agreements `
-        --accept-package-agreements `
-        --output $downloadDir
+    # Download using winget
+    $downloadResult = Invoke-WithRetry -Script {
+        & winget download `
+            --id $pkg.id `
+            --version $pkg.version `
+            --source winget `
+            --accept-source-agreements `
+            --accept-package-agreements `
+            --output $downloadDir 2>&1
+    } -Attempts 2 -DelaySeconds 3
 
     if ($LASTEXITCODE -ne 0) {
-        Write-Warning "⚠ Failed to download: $($pkg.id)"
-        continue
-    }
-
-    Write-Host "✔ Downloaded to: $downloadDir"
-}
-
-Write-Host "`n🛠 Preparing offline installer bootstrap script..."
-
-# Use a single-quoted here-string so variables are evaluated at runtime inside the generated script
-$bootstrap = @'
-# Auto-install all VC++ redistributables that were downloaded
-Write-Host "Installing VC++ Redistributables..."
-
-$base = Split-Path -Parent $MyInvocation.MyCommand.Definition
-
-Get-ChildItem $base -File -Recurse | ForEach-Object {
-    $file = $_.FullName
-    Write-Host "→ Running: $($_.Name)"
-    if ($file.ToLower().EndsWith(".msi")) {
-        Start-Process msiexec -ArgumentList "/i","`"$file`"","/qn","/norestart" -Wait
+        Write-Warning "⚠ Failed to download: $($pkg.id) v$($pkg.version)"
+        $failedDownloads += $pkg.id
     } else {
-        # Many MS redistributables support /quiet /norestart; if a package needs different switches, add mapping
-        Start-Process -FilePath $file -ArgumentList "/quiet","/norestart" -Wait
+        Write-Host "  ✔ Downloaded successfully"
     }
 }
 
-Write-Host "Done."
-'@
+if ($failedDownloads.Count -gt 0) {
+    Write-Warning "`n⚠ Failed to download $($failedDownloads.Count) package(s):"
+    $failedDownloads | ForEach-Object { Write-Warning "  - $_" }
+}
+
+# Get list of downloaded executables
+$executables = Get-ChildItem -Path $downloadDir -Filter "*.exe" -Recurse
+Write-Host "`n📦 Found $($executables.Count) executables"
+
+if ($executables.Count -eq 0) {
+    Write-Error "❌ No executables found in download directory. Build failed."
+    exit 1
+}
+
+# Create installer script
+Write-Host "`n📄 Generating installer script..." -ForegroundColor Cyan
 
 $scriptPath = Join-Path $OutputDir "installer.ps1"
-Set-Content $scriptPath $bootstrap -Encoding UTF8
 
+$installerScript = @'
+# VCRedist AIO Offline Installer
+# Generated by build script
 
-Write-Host "📦 Converting installer.ps1 → EXE using PowerShell2Exe JSON config..."
+param(
+    [switch] $Silent = $false
+)
 
-# Read ps2exe config robustly
-$cfg = Get-Content $PSEXEPath -Raw | ConvertFrom-Json
-$inputFile = $scriptPath
-$outputFile = if ($cfg.output) { $cfg.output } else { Join-Path $OutputDir "VC_Redist_AIO_Offline.exe" }
-$icon = $cfg.icon
-$requireAdmin = $cfg.requireAdmin
-$noConsole = $cfg.noConsole
+$ErrorActionPreference = "Continue"
+$VerbosePreference = "SilentlyContinue"
 
-# Ensure ps2exe module present and functional
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$packageDir = Join-Path $scriptDir "packages"
+
+Write-Host "🚀 Installing Microsoft Visual C++ Redistributables..."
+
+if (-not (Test-Path $packageDir)) {
+    Write-Error "Package directory not found: $packageDir"
+    exit 1
+}
+
+$exeFiles = @(Get-ChildItem -Path $packageDir -Filter "*.exe" -Recurse)
+
+if ($exeFiles.Count -eq 0) {
+    Write-Error "No executables found in: $packageDir"
+    exit 1
+}
+
+Write-Host "📦 Found $($exeFiles.Count) packages to install"
+
+$installed = 0
+$failed = 0
+
+foreach ($exe in $exeFiles) {
+    Write-Host "`n➡ Installing: $($exe.Name)..."
+    
+    try {
+        $args = @("/q", "/norestart")
+        if ($Silent) { $args += "/quiet" }
+        
+        & $exe.FullName $args
+        
+        if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 3010) {
+            Write-Host "  ✔ Installed successfully"
+            $installed++
+        } else {
+            Write-Warning "  ⚠ Installation returned code: $LASTEXITCODE"
+            $failed++
+        }
+    } catch {
+        Write-Error "  ❌ Failed to execute: $($_.Exception.Message)"
+        $failed++
+    }
+}
+
+Write-Host "`n✅ Installation complete: $installed installed, $failed failed"
+
+if ($failed -gt 0) {
+    exit 1
+}
+
+exit 0
+'@
+
+$installerScript | Out-File $scriptPath -Encoding UTF8 -Force
+Write-Host "✔ Installer script created: $scriptPath"
+
+# Create here-string with dynamic package list
+$packageCopyScript = @'
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$packageDir = Join-Path $scriptDir "packages"
+New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
+'@
+
+Write-Host "`n📋 Creating package bundle..." -ForegroundColor Cyan
+
+# Copy all executables to packages subfolder within the script directory
+$packagesSubDir = Join-Path $OutputDir "packages"
+New-Item -ItemType Directory -Path $packagesSubDir -Force | Out-Null
+
+foreach ($exe in $executables) {
+    Copy-Item -Path $exe.FullName -Destination $packagesSubDir -Force
+    Write-Host "  ✔ Copied: $($exe.Name)"
+}
+
+Write-Host "✔ Packages bundled"
+
+# Ensure ps2exe module is available and functional
+Write-Host "`n📦 Verifying ps2exe environment..." -ForegroundColor Cyan
+
 $ps2exeCheck = pwsh -Command "
     try {
         if (-not (Get-Module -ListAvailable -Name ps2exe)) {
@@ -171,34 +206,63 @@ $ps2exeCheck = pwsh -Command "
         Write-Host 'ps2exe ready'
         exit 0
     } catch {
-        Write-Error \"ps2exe setup failed: `\$_\"
+        Write-Error `"ps2exe setup failed: `$_`"
         exit 1
     }
 "
 
 if ($LASTEXITCODE -ne 0) {
-    Write-Error "Failed to initialize ps2exe. Aborting build."
+    Write-Error "❌ Failed to initialize ps2exe. Aborting build."
     exit 1
 }
 
-# Now invoke ps2exe with proper error handling
-$ps2exeResult = pwsh -Command "
-    Import-Module ps2exe -ErrorAction Stop
-    Invoke-ps2exe -InputFile \"$inputFile\" -OutputFile \"$outputFile\" -Icon \"$icon\" -RequireAdministrator:\$$requireAdmin -NoConsole:\$$noConsole -ErrorAction Stop
-"
+# Convert PowerShell script to EXE
+Write-Host "`n📦 Converting installer.ps1 → EXE using ps2exe..." -ForegroundColor Cyan
+
+$cfg = Get-Content $PSEXEPath -Raw | ConvertFrom-Json
+$inputFile = $scriptPath
+$outputFile = if ($cfg.output) { Join-Path $OutputDir (Split-Path $cfg.output -Leaf) } else { Join-Path $OutputDir "VC_Redist_AIO_Offline.exe" }
+$icon = $cfg.icon
+$requireAdmin = $cfg.requireAdmin
+$noConsole = $cfg.noConsole
+
+$ps2exeCmd = @"
+Import-Module ps2exe -ErrorAction Stop
+Invoke-ps2exe -InputFile `"$inputFile`" -OutputFile `"$outputFile`" -RequireAdministrator:`$$requireAdmin -NoConsole:`$$noConsole -ErrorAction Stop
+"@
+
+if ($icon -and (Test-Path $icon)) {
+    $ps2exeCmd = @"
+Import-Module ps2exe -ErrorAction Stop
+Invoke-ps2exe -InputFile `"$inputFile`" -OutputFile `"$outputFile`" -Icon `"$icon`" -RequireAdministrator:`$$requireAdmin -NoConsole:`$$noConsole -ErrorAction Stop
+"@
+}
+
+$ps2exeResult = pwsh -Command $ps2exeCmd
 
 if ($LASTEXITCODE -ne 0) {
-    Write-Error "ps2exe conversion failed. Output: $ps2exeResult"
+    Write-Error "❌ ps2exe conversion failed: $ps2exeResult"
     exit 1
 }
 
-# Create a SHA256 checksum for the produced EXE if present
+# Verify output EXE exists
+if (-not (Test-Path $outputFile)) {
+    Write-Error "❌ Output EXE not created: $outputFile"
+    exit 1
+}
+
+Write-Host "✔ EXE created successfully: $outputFile"
+
+# Create SHA256 checksum
 if (Test-Path $outputFile) {
     $hash = Get-FileHash $outputFile -Algorithm SHA256
     $checksumFile = Join-Path (Split-Path $outputFile -Parent) "SHA256.txt"
-    "$($hash.Hash)  $(Split-Path $outputFile -Leaf)" | Out-File $checksumFile -Encoding ASCII
+    "$($hash.Hash)  $(Split-Path $outputFile -Leaf)" | Out-File $checksumFile -Encoding ASCII -Force
     Write-Host "🔐 SHA256: $($hash.Hash)"
     Write-Host "📄 Checksum saved to: $checksumFile"
 }
 
-Write-Host "🎉 Build completed. Output in: $OutputDir"
+Write-Host "`n✅ Build completed successfully!" -ForegroundColor Green
+Write-Host "📦 Output: $outputFile"
+
+exit 0

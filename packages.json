@@ -41,11 +41,11 @@
       "version": ""
     },
     {
-      "id": "Microsoft.VCRedist.2015+.x86",
+      "id": "Microsoft.VCRedist.2015Plus.x86",
       "version": ""
     },
     {
-      "id": "Microsoft.VCRedist.2015+.x64",
+      "id": "Microsoft.VCRedist.2015Plus.x64",
       "version": ""
     }
   ]

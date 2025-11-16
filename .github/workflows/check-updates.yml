@@ -1,55 +1,50 @@
 name: Check for Winget Updates
 
-on:
-  schedule:
-    - cron: "0 2 * * *"   # daily at 02:00 UTC
-  workflow_dispatch:
-
 permissions:
   contents: write
 
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
 jobs:
-  check:
+  check-updates:
     runs-on: windows-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
           persist-credentials: true
 
-      - name: Check PowerShell 7
-        shell: pwsh
-        run: |
-          Write-Host "PowerShell version:"
-          $PSVersionTable
-
-      - name: Run update check script
+      - name: Check for updates
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           pwsh -File automation/update-check.ps1 `
             -PackagesFile packages.json `
-            -UpdateBranchPrefix update `
-            -UseWingetRepo
+            -UpdateBranchPrefix update
 
-      - name: Push update branch if exists
-        if: success()
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Configure git
         run: |
           git config --global user.name "github-actions"
           git config --global user.email "actions@github.com"
 
+      - name: Push update branch if exists
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
           if (Test-Path update-branch.txt) {
             $branch = Get-Content update-branch.txt
 
             git checkout -b $branch
             git add packages.json
             git commit -m "Automated update: $branch"
-            # Use the GITHUB_TOKEN for an authenticated push
             $repo = $env:GITHUB_REPOSITORY
             $url = "https://x-access-token:$env:GITHUB_TOKEN@github.com/$repo.git"
             git push $url HEAD:refs/heads/$branch
+            Write-Host "✔ Branch pushed: $branch"
+          } else {
+            Write-Host "ℹ No updates to push"
           }
