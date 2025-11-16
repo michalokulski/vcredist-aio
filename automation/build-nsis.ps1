@@ -3,10 +3,19 @@ param(
     [string] $PackagesFile,
 
     [Parameter(Mandatory = $true)]
-    [string] $OutputDir
+    [string] $OutputDir,
+    
+    [Parameter(Mandatory = $false)]
+    [switch] $DebugMode = $false
 )
 
 $ErrorActionPreference = "Stop"
+
+if ($DebugMode) {
+    Write-Host "🐛 DEBUG MODE ENABLED" -ForegroundColor Yellow
+    $VerbosePreference = 'Continue'
+    $DebugPreference = 'Continue'
+}
 
 function Invoke-WithRetry {
     param(
@@ -348,15 +357,71 @@ Write-Host "✔ NSIS script created" -ForegroundColor Green
 # Compile NSIS installer
 Write-Host "`n🔨 Compiling NSIS installer..." -ForegroundColor Cyan
 
+# Create log file for NSIS output
+$nsisLogFile = Join-Path $OutputDir "nsis-build.log"
+
 $nsisArgs = @(
-    "/V4"
+    "/V4"  # Verbosity level 4 (highest)
     "`"$nsisScript`""
 )
 
-$process = Start-Process -FilePath $nsisPath -ArgumentList $nsisArgs -Wait -PassThru -NoNewWindow
+Write-Host "  NSIS command: $nsisPath $($nsisArgs -join ' ')" -ForegroundColor DarkGray
+Write-Host "  NSIS log: $nsisLogFile" -ForegroundColor DarkGray
 
-if ($process.ExitCode -ne 0) {
-    Write-Error "❌ NSIS compilation failed with exit code: $($process.ExitCode)"
+# Run NSIS with output capture
+$processInfo = New-Object System.Diagnostics.ProcessStartInfo
+$processInfo.FileName = $nsisPath
+$processInfo.Arguments = $nsisArgs -join ' '
+$processInfo.RedirectStandardOutput = $true
+$processInfo.RedirectStandardError = $true
+$processInfo.UseShellExecute = $false
+$processInfo.CreateNoWindow = $true
+
+$process = New-Object System.Diagnostics.Process
+$process.StartInfo = $processInfo
+
+$outputBuilder = New-Object System.Text.StringBuilder
+$errorBuilder = New-Object System.Text.StringBuilder
+
+$outputHandler = {
+    if (-not [string]::IsNullOrEmpty($EventArgs.Data)) {
+        [void]$outputBuilder.AppendLine($EventArgs.Data)
+        Write-Host "  NSIS: $($EventArgs.Data)" -ForegroundColor DarkGray
+    }
+}
+
+$errorHandler = {
+    if (-not [string]::IsNullOrEmpty($EventArgs.Data)) {
+        [void]$errorBuilder.AppendLine($EventArgs.Data)
+        Write-Host "  NSIS ERROR: $($EventArgs.Data)" -ForegroundColor Red
+    }
+}
+
+$process.add_OutputDataReceived($outputHandler)
+$process.add_ErrorDataReceived($errorHandler)
+
+$process.Start() | Out-Null
+$process.BeginOutputReadLine()
+$process.BeginErrorReadLine()
+$process.WaitForExit()
+
+$exitCode = $process.ExitCode
+
+# Save complete log
+$logContent = "NSIS Build Log - $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`n"
+$logContent += "=" * 80 + "`n"
+$logContent += "Script: $nsisScript`n"
+$logContent += "Output: $outputExe`n"
+$logContent += "Exit Code: $exitCode`n"
+$logContent += "`nSTDOUT:`n" + $outputBuilder.ToString()
+$logContent += "`nSTDERR:`n" + $errorBuilder.ToString()
+$logContent | Out-File $nsisLogFile -Encoding UTF8 -Force
+
+if ($exitCode -ne 0) {
+    Write-Error "❌ NSIS compilation failed with exit code: $exitCode"
+    Write-Host "`n📋 NSIS build log saved to: $nsisLogFile" -ForegroundColor Yellow
+    Write-Host "`nLast 20 lines of output:" -ForegroundColor Yellow
+    $outputBuilder.ToString() -split "`n" | Select-Object -Last 20 | ForEach-Object { Write-Host "  $_" }
     exit 1
 }
 
@@ -382,9 +447,9 @@ Write-Host "`n🧹 Cleaning up temporary files..." -ForegroundColor Cyan
 if (Test-Path $downloadDir) {
     Remove-Item -Path $downloadDir -Recurse -Force -ErrorAction SilentlyContinue
 }
-if (Test-Path $nsisScript) {
-    Remove-Item -Path $nsisScript -Force -ErrorAction SilentlyContinue
-}
+# Keep NSIS script for debugging
+Write-Host "  ℹ NSIS script kept for debugging: $nsisScript" -ForegroundColor DarkGray
+Write-Host "  ℹ NSIS build log: $nsisLogFile" -ForegroundColor DarkGray
 Write-Host "✔ Cleanup complete"
 
 Write-Host "`n✅ Build completed successfully!" -ForegroundColor Green

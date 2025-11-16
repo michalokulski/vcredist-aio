@@ -312,43 +312,43 @@ function Install-Package {
             0 {
                 $result.Success = $true
                 $result.Message = "Installed successfully"
-                Write-Log "  ✔ SUCCESS: Installed" -Level SUCCESS
+                Write-Log "  [OK] SUCCESS: Installed" -Level SUCCESS
             }
             3010 {
                 $result.Success = $true
                 $result.RebootRequired = $true
                 $script:RebootRequired = $true
                 $result.Message = "Installed successfully (reboot required)"
-                Write-Log "  ✔ SUCCESS: Installed (reboot required)" -Level SUCCESS
+                Write-Log "  [OK] SUCCESS: Installed (reboot required)" -Level SUCCESS
             }
             1641 {
                 $result.Success = $true
                 $result.RebootRequired = $true
                 $script:RebootRequired = $true
                 $result.Message = "Installed successfully (reboot initiated)"
-                Write-Log "  ✔ SUCCESS: Installed (reboot initiated)" -Level SUCCESS
+                Write-Log "  [OK] SUCCESS: Installed (reboot initiated)" -Level SUCCESS
             }
             1638 {
                 $result.Success = $true
                 $result.Message = "Already installed (newer or same version)"
-                Write-Log "  ℹ Already installed (newer/same version)" -Level INFO
+                Write-Log "  [INFO] Already installed (newer/same version)" -Level INFO
             }
             5100 {
                 $result.Success = $false
                 $result.Message = "System requirements not met"
-                Write-Log "  ✖ FAILED: System requirements not met" -Level ERROR
+                Write-Log "  [FAIL] FAILED: System requirements not met" -Level ERROR
             }
             default {
                 $result.Success = $false
                 $result.Message = "Installation failed (exit code: $exitCode)"
-                Write-Log "  ✖ FAILED: Exit code $exitCode" -Level WARN
+                Write-Log "  [FAIL] FAILED: Exit code $exitCode" -Level WARN
             }
         }
         
         return $result
         
     } catch {
-        Write-Log "  ✖ EXCEPTION: $($_.Exception.Message)" -Level ERROR
+        Write-Log "  [FAIL] EXCEPTION: $($_.Exception.Message)" -Level ERROR
         
         return @{
             PackageId = $Package.PackageId
@@ -450,14 +450,14 @@ Write-Log "Total duration: $([math]::Round($totalDuration.TotalSeconds, 2))s" -L
 
 if ($script:RebootRequired) {
     Write-Log "" -Level INFO
-    Write-Log "⚠ REBOOT REQUIRED - One or more packages require a system restart" -Level WARN
+    Write-Log "[!] REBOOT REQUIRED - One or more packages require a system restart" -Level WARN
     Write-Log "Please restart your computer to complete the installation" -Level WARN
 }
 
 # Detailed results
 Write-Log "`nDetailed Results:" -Level INFO
 foreach ($result in $results) {
-    $status = if ($result.Success) { "✔" } else { "✖" }
+    $status = if ($result.Success) { "[OK]" } else { "[FAIL]" }
     Write-Log "  $status $($result.PackageId) - $($result.Message)" -Level $(if ($result.Success) { 'INFO' } else { 'WARN' })
 }
 
