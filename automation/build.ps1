@@ -93,7 +93,16 @@ function Get-DownloadUrlFromManifest {
         $urlMatch = [regex]::Match($content, 'InstallerUrl:\s*([^\s#]+)', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [System.Text.RegularExpressions.RegexOptions]::Multiline)
         
         if ($urlMatch.Success) {
-            $url = $urlMatch.Groups[1].Value.Trim() -replace '^["\']|["\']$'
+            $url = $urlMatch.Groups[1].Value.Trim()
+            # Remove surrounding quotes if present
+            $quoteChar = [char]34  # Double quote
+            $singleQuote = [char]39  # Single quote
+            while ($url.Length -gt 0 -and ($url[0] -eq $quoteChar -or $url[0] -eq $singleQuote)) {
+                $url = $url.Substring(1)
+            }
+            while ($url.Length -gt 0 -and ($url[-1] -eq $quoteChar -or $url[-1] -eq $singleQuote)) {
+                $url = $url.Substring(0, $url.Length - 1)
+            }
             Write-Host "    Found URL: $url" -ForegroundColor DarkGray
             return $url
         }
