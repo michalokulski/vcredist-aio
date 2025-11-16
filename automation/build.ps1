@@ -24,14 +24,23 @@ function Invoke-WithRetry {
             $result = & $Script
             return $result
         } catch {
+            $msg = $_.Exception.Message
+            
+            # Add rate limit detection
+            if ($msg -match "403|rate limit") {
+                Write-Host "⏳ GitHub API rate limit detected. Waiting 90 seconds..." -ForegroundColor Cyan
+                Start-Sleep -Seconds 90
+                continue
+            }
+            
             if ($i -lt $Attempts) {
                 $wait = [math]::Min(30, $DelaySeconds * [math]::Pow(2, $i - 1))
                 $wait = $wait + (Get-Random -Minimum 0 -Maximum 3)
-                Write-Host ("Retry {0}/{1} failed: {2}. Waiting {3} seconds before retry..." -f $i, $Attempts, $_.Exception.Message, [int]$wait)
+                Write-Host ("Retry {0}/{1} failed: {2}. Waiting {3} seconds before retry..." -f $i, $Attempts, $msg, [int]$wait)
                 Start-Sleep -Seconds $wait
             }
             else {
-                Write-Warning ("Operation failed after {0} attempts: {1}" -f $Attempts, $_.Exception.Message)
+                Write-Warning ("Operation failed after {0} attempts: {1}" -f $Attempts, $msg)
                 return $null
             }
         }
@@ -215,6 +224,25 @@ foreach ($file in $downloadedFiles) {
 
 Write-Host "✔ Packages bundled ($($downloadedFiles.Count) files)"
 
+# Cleanup downloads directory
+Write-Host "`n🧹 Cleaning up temporary downloads..." -ForegroundColor Cyan
+if (Test-Path $downloadDir) {
+    Remove-Item -Path $downloadDir -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Host "✔ Cleanup complete"
+}
+
+# Validate all packages are present before proceeding
+Write-Host "`n✅ Validating package bundle..." -ForegroundColor Cyan
+$expectedCount = $downloadedFiles.Count
+$actualCount = (Get-ChildItem -Path $packagesSubDir -Filter "*.exe").Count
+
+if ($actualCount -ne $expectedCount) {
+    Write-Error "❌ Package validation failed: Expected $expectedCount files, found $actualCount"
+    exit 1
+}
+
+Write-Host "✔ All $actualCount packages validated" -ForegroundColor Green
+
 # Create self-extracting installer script
 Write-Host "`n📄 Generating self-extracting installer..." -ForegroundColor Cyan
 
@@ -265,7 +293,9 @@ if ([string]::IsNullOrWhiteSpace(`$scriptDir)) {
 }
 
 `$packageDir = Join-Path `$scriptDir "packages"
-`$logDir = `$scriptDir
+
+# Fix: Use user's temp directory for logs when running as EXE
+`$logDir = if (Test-Path env:TEMP) { `$env:TEMP } else { `$scriptDir }
 
 # Create packages directory
 New-Item -ItemType Directory -Path `$packageDir -Force | Out-Null
@@ -274,6 +304,7 @@ New-Item -ItemType Directory -Path `$packageDir -Force | Out-Null
 `$embeddedPackages = $embeddedPackages
 
 # Extract packages
+`$extractionFailed = `$false
 foreach (`$pkg in `$embeddedPackages.GetEnumerator()) {
     `$fileName = `$pkg.Key
     `$base64Data = `$pkg.Value
@@ -284,8 +315,14 @@ foreach (`$pkg in `$embeddedPackages.GetEnumerator()) {
         [System.IO.File]::WriteAllBytes(`$outputPath, `$bytes)
         Write-Host "  ✔ Extracted: `$fileName" -ForegroundColor Green
     } catch {
-        Write-Warning "  ⚠ Failed to extract: `$fileName"
+        Write-Warning "  ⚠ Failed to extract: `$fileName - `$(`$_.Exception.Message)"
+        `$extractionFailed = `$true
     }
+}
+
+if (`$extractionFailed) {
+    Write-Error "❌ Package extraction failed. Installation cannot continue."
+    exit 1
 }
 
 Write-Host "✔ Extraction complete`n" -ForegroundColor Green
@@ -309,10 +346,19 @@ $ps2exeCheck = pwsh -Command "
             Install-Module -Name ps2exe -Force -Scope CurrentUser -AllowClobber -ErrorAction Stop
         }
         Import-Module ps2exe -ErrorAction Stop
+        
+        # Verify version (ps2exe 1.0.13+ recommended)
+        `$version = (Get-Module ps2exe).Version
+        Write-Host \"ps2exe version: `$version\"
+        
+        if (`$version -lt [version]'1.0.13') {
+            Write-Warning 'Older ps2exe version detected. Consider updating: Update-Module ps2exe'
+        }
+        
         Write-Host 'ps2exe ready'
         exit 0
     } catch {
-        Write-Error `"ps2exe setup failed: `$_`"
+        Write-Error \`"ps2exe setup failed: `$_\`"
         exit 1
     }
 "
