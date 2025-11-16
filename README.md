@@ -1,6 +1,10 @@
 // filepath: README.md
 # VC Redist AIO — Winget-based Offline Installer
 
+![Latest Release](https://img.shields.io/github/v/release/michalokulski/vcredist-aio)
+![Build Status](https://github.com/michalokulski/vcredist-aio/actions/workflows/build-release.yml/badge.svg)
+![License](https://img.shields.io/github/license/michalokulski/vcredist-aio)
+
 **VC Redist AIO** is a modern, automated project that downloads official Microsoft Visual C++ Redistributable installers via **Winget**, bundles them into a single offline installer, and produces both an **NSIS installer** and **ZIP package**. This project is inspired by [abbodi1406's VC++ AIO](https://github.com/abbodi1406/vcredist) and focuses on a **Winget-based approach** with full automation, transparency, and modern tooling optimized for **Windows 10/11**.
 
 > **Acknowledgment**: Special thanks to [abbodi1406](https://github.com/abbodi1406) for the original VC++ Redistributables AIO project, which inspired this modern, automated alternative.
