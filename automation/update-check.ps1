@@ -71,11 +71,16 @@ function Get-LatestVersionFromManifestPath {
         # Get list of version folders
         $versionDirs = Invoke-WithRetry -Script { 
             Invoke-RestMethod -Uri $archUrl -Headers $Headers -ErrorAction Stop 
-        } -Attempts 2 -DelaySeconds 2
+        } -Attempts 3 -DelaySeconds 2
 
         if (-not $versionDirs) { 
             Write-Host "  ⚠ No version directories found at: $archPath" -ForegroundColor DarkGray
             return $null 
+        }
+
+        # Ensure we're working with an array
+        if ($versionDirs -isnot [array]) {
+            $versionDirs = @($versionDirs)
         }
 
         # Extract and sort version folders
@@ -98,12 +103,19 @@ function Get-LatestVersionFromManifestPath {
                 $ver = [version]$v
                 $parsed += @{name=$v; ver=$ver}
             } catch {
-                # Fallback: treat as string if not semver
+                # Fallback: treat as string if not semver, compare lexicographically
                 $parsed += @{name=$v; ver=[version]"0.0.0.0"}
             }
         }
 
-        $sorted = $parsed | Sort-Object -Property @{Expression={$_.ver}; Descending=$true}
+        # Sort versions: highest first
+        $sorted = @($parsed | Sort-Object -Property @{Expression={$_.ver}; Descending=$true}) | Where-Object { $_ }
+        
+        if ($sorted.Count -eq 0) {
+            Write-Host "  ⚠ Failed to sort versions" -ForegroundColor DarkGray
+            return $null
+        }
+
         $chosenVersion = $sorted[0].name
 
         if ([string]::IsNullOrWhiteSpace($chosenVersion)) { return $null }
@@ -111,7 +123,8 @@ function Get-LatestVersionFromManifestPath {
         Write-Host "  Latest version: $chosenVersion" -ForegroundColor DarkGray
         return $chosenVersion
     } catch {
-        Write-Host "  Error: $($_.Exception.Message)" -ForegroundColor DarkGray
+        Write-Host "  ❌ Error: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "  StackTrace: $($_.ScriptStackTrace)" -ForegroundColor DarkRed
         return $null
     }
 }
