@@ -15,10 +15,10 @@
 
 param(
     [Parameter(Mandatory = $false)]
-    [string] $PackageDir = (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "packages"),
+    [string] $PackageDir,
     
     [Parameter(Mandatory = $false)]
-    [string] $LogDir = (Split-Path -Parent $MyInvocation.MyCommand.Path),
+    [string] $LogDir,
     
     [switch] $Silent = $false,
     
@@ -28,12 +28,41 @@ param(
 $ErrorActionPreference = "Continue"
 $WarningPreference = "Continue"
 
+# Resolve script directory for default paths
+$scriptDir = $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($scriptDir)) {
+    $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+}
+if ([string]::IsNullOrWhiteSpace($scriptDir)) {
+    $scriptDir = Get-Location
+}
+
+# Set default paths if not provided
+if ([string]::IsNullOrWhiteSpace($PackageDir)) {
+    $PackageDir = Join-Path $scriptDir "packages"
+}
+
+if ([string]::IsNullOrWhiteSpace($LogDir)) {
+    $LogDir = $scriptDir
+}
+
 # ============================================================================
 # LOGGING INFRASTRUCTURE
 # ============================================================================
 
+# Ensure log directory exists
+if (-not (Test-Path $LogDir)) {
+    try {
+        New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+    } catch {
+        # Fallback to temp directory if log dir creation fails
+        $LogDir = $env:TEMP
+    }
+}
+
 $script:LogFile = Join-Path $LogDir "vcredist-install-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
 $script:InstallStartTime = Get-Date
+$script:RebootRequired = $false
 
 function Write-Log {
     param(
@@ -78,6 +107,29 @@ function Write-LogHeader {
 # ============================================================================
 # VALIDATION FUNCTIONS
 # ============================================================================
+
+function Write-SystemInfo {
+    Write-Log "System Information:" -Level INFO
+    
+    try {
+        $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction SilentlyContinue
+        if ($os) {
+            Write-Log "  OS: $($os.Caption) $($os.Version)" -Level INFO
+            Write-Log "  Architecture: $($os.OSArchitecture)" -Level INFO
+            Write-Log "  Build: $($os.BuildNumber)" -Level INFO
+        }
+        
+        $computerInfo = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction SilentlyContinue
+        if ($computerInfo) {
+            Write-Log "  Computer: $($computerInfo.Name)" -Level INFO
+        }
+        
+        Write-Log "  PowerShell: $($PSVersionTable.PSVersion)" -Level INFO
+        Write-Log "  Script Mode: $(if ($Silent) { 'Silent' } else { 'Interactive' })" -Level INFO
+    } catch {
+        Write-Log "Failed to retrieve system information: $($_.Exception.Message)" -Level DEBUG
+    }
+}
 
 function Test-AdministratorPrivileges {
     Write-Log "Checking administrator privileges..." -Level DEBUG
@@ -147,15 +199,34 @@ function Get-PackageManifest {
         $packageId = $fileName -replace '_(\d+\.)+\d+$', ''  # Remove version suffix
         $packageId = $packageId -replace '_', '.'  # Convert underscores to dots
         
+        # Extract year and architecture for sorting
+        $year = 0
+        $arch = 0  # x86=0, x64=1 for sorting
+        
+        if ($fileName -match '(\d{4})|(2015Plus)') {
+            $yearStr = $matches[0]
+            $year = switch ($yearStr) {
+                '2015Plus' { 2015 }
+                default { [int]$yearStr }
+            }
+        }
+        
+        if ($fileName -match 'x64') { $arch = 1 }
+        
         $manifest += @{
             PackageId = $packageId
             FileName = $file.Name
             FilePath = $file.FullName
             Size = [math]::Round($file.Length / 1MB, 2)
+            Year = $year
+            Architecture = $arch
         }
         
         Write-Log "  - $($file.Name) ($([math]::Round($file.Length / 1MB, 2)) MB)" -Level DEBUG
     }
+    
+    # Sort by year (ascending), then architecture (x86 before x64)
+    $manifest = $manifest | Sort-Object -Property Year, Architecture
     
     return $manifest
 }
@@ -224,6 +295,7 @@ function Install-Package {
         # Interpret exit codes
         # 0 = Success
         # 3010 = Success, reboot required
+        # 1641 = Success, reboot initiated
         # 1638 = Already installed (newer version)
         # 5100 = System requirements not met
         
@@ -233,6 +305,7 @@ function Install-Package {
             Duration = $duration.TotalSeconds
             Success = $false
             Message = ""
+            RebootRequired = $false
         }
         
         switch ($exitCode) {
@@ -243,8 +316,17 @@ function Install-Package {
             }
             3010 {
                 $result.Success = $true
+                $result.RebootRequired = $true
+                $script:RebootRequired = $true
                 $result.Message = "Installed successfully (reboot required)"
                 Write-Log "  ✔ SUCCESS: Installed (reboot required)" -Level SUCCESS
+            }
+            1641 {
+                $result.Success = $true
+                $result.RebootRequired = $true
+                $script:RebootRequired = $true
+                $result.Message = "Installed successfully (reboot initiated)"
+                Write-Log "  ✔ SUCCESS: Installed (reboot initiated)" -Level SUCCESS
             }
             1638 {
                 $result.Success = $true
@@ -288,6 +370,9 @@ Write-Log "Installation started at: $script:InstallStartTime" -Level INFO
 Write-Log "Package directory: $PackageDir" -Level INFO
 Write-Log "Log directory: $LogDir" -Level INFO
 Write-Log "Log file: $script:LogFile" -Level INFO
+
+# Log system information
+Write-SystemInfo
 
 # Phase 1: Validation
 Write-LogHeader "Phase 1: Pre-Installation Validation"
@@ -334,8 +419,15 @@ Write-LogHeader "Phase 4: Installing Packages"
 $results = @()
 $successCount = 0
 $failCount = 0
+$currentPackage = 0
+$totalPackages = $packages.Count
 
 foreach ($pkg in $packages) {
+    $currentPackage++
+    
+    Write-Log "" -Level INFO  # Blank line for readability
+    Write-Log "Progress: [$currentPackage/$totalPackages] Installing package $currentPackage of $totalPackages" -Level INFO
+    
     $result = Install-Package -Package $pkg
     $results += $result
     
@@ -354,7 +446,13 @@ $totalDuration = (Get-Date) - $script:InstallStartTime
 Write-Log "Total packages: $($packages.Count)" -Level INFO
 Write-Log "Successful: $successCount" -Level SUCCESS
 Write-Log "Failed: $failCount" -Level $(if ($failCount -gt 0) { 'WARN' } else { 'INFO' })
-Write-Log "Total duration: $($totalDuration.TotalSeconds)s" -Level INFO
+Write-Log "Total duration: $([math]::Round($totalDuration.TotalSeconds, 2))s" -Level INFO
+
+if ($script:RebootRequired) {
+    Write-Log "" -Level INFO
+    Write-Log "⚠ REBOOT REQUIRED - One or more packages require a system restart" -Level WARN
+    Write-Log "Please restart your computer to complete the installation" -Level WARN
+}
 
 # Detailed results
 Write-Log "`nDetailed Results:" -Level INFO
