@@ -55,128 +55,148 @@ function Get-LatestVersionFromManifestPath {
     )
 
     try {
+        # Fallback versions for packages without current manifests in winget-pkgs
+        $fallbackVersions = @{
+            "Microsoft.VCRedist.2005.x86" = "8.0.61000"
+            "Microsoft.VCRedist.2005.x64" = "8.0.61000"
+            "Microsoft.VCRedist.2008.x86" = "9.0.30729.6161"
+            "Microsoft.VCRedist.2008.x64" = "9.0.30729.6161"
+            "Microsoft.VCRedist.2010.x86" = "10.0.40219"
+            "Microsoft.VCRedist.2010.x64" = "10.0.40219"
+            "Microsoft.VCRedist.2012.x86" = "11.0.61030.0"
+            "Microsoft.VCRedist.2012.x64" = "11.0.61030.0"
+            "Microsoft.VCRedist.2013.x86" = "12.0.40664.0"
+            "Microsoft.VCRedist.2013.x64" = "12.0.40664.0"
+            "Microsoft.VCRedist.2015Plus.x86" = "14.44.35211.0"
+            "Microsoft.VCRedist.2015Plus.x64" = "14.44.35211.0"
+        }
+
+        # Parse PackageId: Microsoft.VCRedist.2005.x86 or Microsoft.VCRedist.2015Plus.x64
         $parts = $PackageId -split '\.'
-        if ($parts.Length -lt 2) { return $null }
-
-        $vendor = $parts[0]
-        $product = $parts[1]
-
-        # Special handling for 2015+ (which uses a different folder structure in the repo)
-        $productPath = $product
-        $is2015Plus = $false
-        if ($product -eq "VCRedist" -and $parts.Length -gt 2 -and $parts[2] -eq "2015Plus") {
-            $productPath = "VCRedist/2015+"
-            $is2015Plus = $true
+        if ($parts.Length -lt 3) { 
+            if ($fallbackVersions.ContainsKey($PackageId)) { return $fallbackVersions[$PackageId] }
+            return $null 
         }
 
-        # List the vendor/product folder (avoid assuming a PackageId folder exists)
-        $parentPath = "manifests/m/$vendor/$productPath"
-        $parentApiUrl = "https://api.github.com/repos/microsoft/winget-pkgs/contents/$parentPath"
+        $vendor = $parts[0]           # "Microsoft"
+        $product = $parts[1]          # "VCRedist"
+        $versionPart = $parts[2]      # "2005", "2008", "2015Plus", etc.
+        $arch = if ($PackageId -match "x64") { "x64" } else { "x86" }
 
-        # Use a single attempt for the top-level listing to avoid noisy 404 retries
-        $dirList = Invoke-WithRetry -Script { Invoke-RestMethod -Uri $parentApiUrl -Headers $Headers -ErrorAction Stop } -Attempts 1 -DelaySeconds 1
-        if (-not $dirList) { return $null }
+        # Determine folder structure
+        # 2015+ uses: manifests/m/Microsoft/VCRedist/2015+/<arch>/<version>/
+        # Older uses: manifests/m/Microsoft/VCRedist/<year>/<arch>/<version>/
+        $folderYear = if ($versionPart -eq "2015Plus") { "2015+" } else { $versionPart }
 
-        # For 2015+, look for x86/x64 folders; for older versions, look for PackageId or version folders
-        $targetFolder = $null
+        # Build the path to the architecture folder
+        $archPath = "manifests/m/$vendor/$product/$folderYear/$arch"
+        $archUrl = "https://api.github.com/repos/microsoft/winget-pkgs/contents/$archPath"
 
-        if ($is2015Plus) {
-            # 2015+ structure: manifests/m/Microsoft/VCRedist/2015+/x86 or x64
-            $arch = if ($PackageId -match "x64") { "x64" } else { "x86" }
-            $targetFolder = $dirList | Where-Object { $_.type -eq 'dir' -and $_.name -eq $arch } | Select-Object -First 1
-        } else {
-            # Older structure: manifests/m/Microsoft/VCRedist/2005/x86, etc.
-            $targetFolder = $dirList | Where-Object { $_.type -eq 'dir' -and $_.name -eq $PackageId } | Select-Object -First 1
-            if (-not $targetFolder) {
-                # Fallback: look for any folder matching the product year
-                $year = $parts[2]
-                $targetFolder = $dirList | Where-Object { $_.type -eq 'dir' -and $_.name -eq $year } | Select-Object -First 1
+        Write-Host "  Trying manifest path: $archPath" -ForegroundColor DarkGray
+
+        # Get list of version folders (single attempt to avoid rate limit)
+        $versionDirs = $null
+        try {
+            $versionDirs = Invoke-RestMethod -Uri $archUrl -Headers $Headers -ErrorAction Stop
+        } catch {
+            Write-Host "  Manifest path not found, using fallback" -ForegroundColor DarkGray
+            if ($fallbackVersions.ContainsKey($PackageId)) { 
+                return $fallbackVersions[$PackageId] 
             }
+            return $null
         }
 
-        if (-not $targetFolder) { return $null }
-
-        $versionDirUrl = $targetFolder.url
-        $versionFolders = Invoke-WithRetry -Script { Invoke-RestMethod -Uri $versionDirUrl -Headers $Headers -ErrorAction Stop } -Attempts 2 -DelaySeconds 1
-        if (-not $versionFolders) { return $null }
-
-        # For 2015+: versionFolders should contain version directories directly
-        # For older: versionFolders should contain architecture folders
-        $archDirUrl = $null
-        if ($is2015Plus) {
-            $archDirUrl = $versionDirUrl
-        } else {
-            $arch = if ($PackageId -match "x64") { "x64" } else { "x86" }
-            $archDir = $versionFolders | Where-Object { $_.type -eq 'dir' -and $_.name -eq $arch } | Select-Object -First 1
-            if ($archDir) { $archDirUrl = $archDir.url }
+        if (-not $versionDirs) { 
+            if ($fallbackVersions.ContainsKey($PackageId)) { 
+                return $fallbackVersions[$PackageId] 
+            }
+            return $null 
         }
 
-        if (-not $archDirUrl) { return $null }
-
-        $versionDirs = Invoke-WithRetry -Script { Invoke-RestMethod -Uri $archDirUrl -Headers $Headers -ErrorAction Stop } -Attempts 2 -DelaySeconds 1
-        if (-not $versionDirs) { return $null }
-
-        # Extract version folder names and sort by semantic version
+        # Extract version folder names
         $versions = @()
-        $directYamlVersion = $null
-
         foreach ($vd in $versionDirs) {
-            if ($vd.type -eq 'dir') {
+            if ($vd.type -eq 'dir' -and -not [string]::IsNullOrWhiteSpace($vd.name)) {
                 $versions += $vd.name
             }
-            elseif ($vd.type -eq 'file' -and ($vd.name -match '\.ya?ml$')) {
-                # Try extracting version directly from file at this level (fallback)
-                $fileObj = Invoke-WithRetry -Script { Invoke-RestMethod -Uri $vd.url -Headers $Headers -ErrorAction Stop } -Attempts 1 -DelaySeconds 1
-                if ($fileObj -and $fileObj.content) {
-                    $content = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($fileObj.content))
-                    foreach ($regex in @('^[ \t]*Version:[ \t]*(.+)$', '^[ \t]*PackageVersion:[ \t]*(.+)$')) {
-                        $m = [regex]::Match($content, $regex, [System.Text.RegularExpressions.RegexOptions]::Multiline)
-                        if ($m.Success) {
-                            $directYamlVersion = $m.Groups[1].Value.Trim()
-                            break
-                        }
-                    }
-                }
+        }
+
+        if ($versions.Count -eq 0) {
+            Write-Host "  No version folders found, using fallback" -ForegroundColor DarkGray
+            if ($fallbackVersions.ContainsKey($PackageId)) { 
+                return $fallbackVersions[$PackageId] 
+            }
+            return $null
+        }
+
+        # Sort by semantic version (descending)
+        $parsed = @()
+        foreach ($v in $versions) {
+            try {
+                $ver = [version]$v
+                $parsed += @{name=$v; ver=$ver}
+            } catch {
+                $parsed += @{name=$v; ver=$null}
             }
         }
 
-        if ($directYamlVersion) { return $directYamlVersion }
+        $withVer = $parsed | Where-Object { $_.ver -ne $null } | Sort-Object -Property ver -Descending
+        $chosenVersion = if ($withVer.Count -gt 0) { $withVer[0].name } else { ($versions | Sort-Object -Descending)[0] }
 
-        if ($versions.Count -gt 0) {
-            # Sort by semantic version, then alphabetically as fallback
-            $parsed = @()
-            foreach ($v in $versions) {
-                try {
-                    $ver = [version]$v
-                    $parsed += @{name=$v; ver=$ver; valid=$true}
-                } catch {
-                    $parsed += @{name=$v; ver=$null; valid=$false}
-                }
+        if ([string]::IsNullOrWhiteSpace($chosenVersion)) {
+            if ($fallbackVersions.ContainsKey($PackageId)) { 
+                return $fallbackVersions[$PackageId] 
             }
-            $withVer = $parsed | Where-Object { $_.valid } | Sort-Object -Property ver -Descending
-            $chosen = if ($withVer.Count -gt 0) { $withVer[0].name } else { ($parsed | Sort-Object -Property name -Descending)[0].name }
+            return $null
+        }
 
-            $versionPath = "$archDirUrl/$chosen"
-            $versionContentsUrl = "https://api.github.com/repos/microsoft/winget-pkgs/contents/$versionPath"
-            $versionFiles = Invoke-WithRetry -Script { Invoke-RestMethod -Uri $versionContentsUrl -Headers $Headers -ErrorAction Stop } -Attempts 2 -DelaySeconds 1
-            if ($versionFiles) {
-                foreach ($f in $versionFiles) {
-                    if ($f.type -eq 'file' -and ($f.name -match '\.ya?ml$')) {
-                        $fileObj = Invoke-WithRetry -Script { Invoke-RestMethod -Uri $f.url -Headers $Headers -ErrorAction Stop } -Attempts 2 -DelaySeconds 1
-                        if ($fileObj -and $fileObj.content) {
-                            $content = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($fileObj.content))
-                            foreach ($regex in @('^[ \t]*Version:[ \t]*(.+)$', '^[ \t]*PackageVersion:[ \t]*(.+)$', '^[ \t]*packageVersion:[ \t]*(.+)$')) {
-                                $m = [regex]::Match($content, $regex, [System.Text.RegularExpressions.RegexOptions]::Multiline)
-                                if ($m.Success) { return $m.Groups[1].Value.Trim() }
+        Write-Host "  Latest version folder: $chosenVersion" -ForegroundColor DarkGray
+
+        # Fetch the manifest YAML file
+        $manifestUrl = "$archUrl/$chosenVersion"
+        $manifestFiles = $null
+        try {
+            $manifestFiles = Invoke-RestMethod -Uri $manifestUrl -Headers $Headers -ErrorAction Stop
+        } catch {
+            # If manifest folder can't be read, return folder name as version
+            return $chosenVersion
+        }
+
+        if (-not $manifestFiles) { return $chosenVersion }
+
+        # Find the YAML file and extract version
+        foreach ($file in $manifestFiles) {
+            if ($file.type -eq 'file' -and ($file.name -match '\.ya?ml$')) {
+                try {
+                    $fileObj = Invoke-RestMethod -Uri $file.url -Headers $Headers -ErrorAction Stop
+                    if ($fileObj -and $fileObj.content) {
+                        $content = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($fileObj.content))
+                        
+                        # Try to extract version from YAML
+                        foreach ($regex in @('^[ \t]*Version:[ \t]*(.+)$', '^[ \t]*PackageVersion:[ \t]*(.+)$', '^[ \t]*packageVersion:[ \t]*(.+)$')) {
+                            $m = [regex]::Match($content, $regex, [System.Text.RegularExpressions.RegexOptions]::Multiline)
+                            if ($m.Success) { 
+                                $extractedVersion = $m.Groups[1].Value.Trim()
+                                Write-Host "  Extracted version: $extractedVersion" -ForegroundColor DarkGray
+                                return $extractedVersion 
                             }
                         }
                     }
+                } catch {
+                    # Continue to next file
                 }
             }
         }
 
-        return $null
+        # Fallback: return the folder name as version
+        Write-Host "  Using folder name as version: $chosenVersion" -ForegroundColor DarkGray
+        return $chosenVersion
     } catch {
+        Write-Host "  Error: $($_.Exception.Message)" -ForegroundColor DarkGray
+        # Check if fallback exists
+        if ($fallbackVersions.ContainsKey($PackageId)) { 
+            return $fallbackVersions[$PackageId] 
+        }
         return $null
     }
 }
