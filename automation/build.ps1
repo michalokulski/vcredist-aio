@@ -330,7 +330,7 @@ $noConsole = $cfg.noConsole
 
 $ps2exeCmd = @"
 Import-Module ps2exe -ErrorAction Stop
-Invoke-ps2exe -InputFile `"$inputFile`" -OutputFile `"$outputFile`" -RequireAdministrator:`$$requireAdmin -NoConsole:`$$noConsole -ErrorAction Stop
+Invoke-ps2exe -InputFile `"$inputFile`" -OutputFile `"$outputFile`" -RequireAdmin:`$$requireAdmin -NoConsole:`$$noConsole -ErrorAction Stop
 "@
 
 $ps2exeResult = pwsh -Command $ps2exeCmd
