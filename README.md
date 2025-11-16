@@ -90,13 +90,11 @@ Each release includes two formats:
 ├── automation/
 │   ├── install.ps1         # Standalone installation engine with logging & validation
 │   ├── update-check.ps1    # Checks Winget for newer package versions
-│   ├── build.ps1           # Legacy ps2exe builder (deprecated)
-│   └── build-nsis.ps1      # NSIS installer builder (recommended)
+│   └── build-nsis.ps1      # NSIS installer builder
 ├── .github/workflows/
 │   ├── check-updates.yml   # Scheduled Winget update checks
 │   └── build-release.yml   # Builds NSIS installer and publishes releases
 ├── packages.json           # List of Winget package IDs and versions
-├── powershell-to-exe.json  # ps2exe configuration (deprecated)
 └── README.md
 ```
 

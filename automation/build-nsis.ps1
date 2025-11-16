@@ -213,7 +213,12 @@ Write-Host "`n🔍 Checking for NSIS..." -ForegroundColor Cyan
 
 $nsisPath = "C:\Program Files (x86)\NSIS\makensis.exe"
 if (-not (Test-Path $nsisPath)) {
-    Write-Error "❌ NSIS not found at: $nsisPath"
+    # Try 64-bit path as fallback
+    $nsisPath = "C:\Program Files\NSIS\makensis.exe"
+}
+
+if (-not (Test-Path $nsisPath)) {
+    Write-Error "❌ NSIS not found at: C:\Program Files (x86)\NSIS\makensis.exe or C:\Program Files\NSIS\makensis.exe"
     Write-Host "Please install NSIS from: https://nsis.sourceforge.io/Download" -ForegroundColor Yellow
     Write-Host "Or run: choco install nsis -y" -ForegroundColor Yellow
     exit 1
