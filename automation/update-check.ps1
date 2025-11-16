@@ -97,6 +97,7 @@ function Get-LatestVersionFromManifestPath {
         }
 
         # Sort by semantic version (descending)
+        # Sort versions: highest first
         $parsed = @()
         foreach ($v in $versions) {
             try {
@@ -108,23 +109,28 @@ function Get-LatestVersionFromManifestPath {
             }
         }
 
-        # Sort versions: highest first
-        Write-Host "  DEBUG: Before sort - parsed count: $($parsed.Count)" -ForegroundColor DarkGray
-        $sorted = @($parsed | Sort-Object -Property @{Expression={$_.ver}; Descending=$true}) | Where-Object { $_ }
-        Write-Host "  DEBUG: After sort - sorted count: $($sorted.Count)" -ForegroundColor DarkGray
+        # Sort versions: highest first, then safely extract the top result
+        $sorted = @($parsed | Sort-Object -Property @{Expression={$_.ver}; Descending=$true})
         
-        if ($sorted.Count -eq 0) {
-            Write-Host "  DEBUG: sorted is empty after filter" -ForegroundColor DarkRed
-            Write-Host "  DEBUG: raw sorted before filter: $((@($parsed | Sort-Object -Property @{Expression={$_.ver}; Descending=$true})).Count)" -ForegroundColor DarkRed
-            Write-Host "  ⚠ Failed to sort versions" -ForegroundColor DarkGray
-            return $null
+        # Get the first non-null element (Sort-Object sometimes adds null entries with single-item arrays)
+        $chosenVersion = $null
+        foreach ($item in $sorted) {
+            if ($item -and $item.name) {
+                $chosenVersion = $item.name
+                break
+            }
         }
 
-        Write-Host "  DEBUG: sorted[0] = $($sorted[0] | ConvertTo-Json)" -ForegroundColor DarkGray
-        $chosenVersion = $sorted[0].name
+        if ([string]::IsNullOrWhiteSpace($chosenVersion)) { 
+            Write-Host "  ⚠ Failed to extract version" -ForegroundColor DarkGray
+            return $null 
+        }
+
+        Write-Host "  Latest version: $chosenVersion" -ForegroundColor DarkGray
+        return $chosenVersion
 
         if ([string]::IsNullOrWhiteSpace($chosenVersion)) { 
-            Write-Host "  DEBUG: chosenVersion is empty/null" -ForegroundColor DarkRed
+            Write-Host "  ⚠ Failed to extract version from sorted results" -ForegroundColor DarkGray
             return $null 
         }
 
