@@ -168,3 +168,5 @@ if ($updatesFound) {
 else {
     Write-Host "`n✔ No updates found." -ForegroundColor Green
 }
+
+exit 0
