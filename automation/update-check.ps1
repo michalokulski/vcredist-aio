@@ -62,7 +62,7 @@ function Get-LatestVersionFromManifestPath {
         # Determine folder structure
         $folderYear = if ($versionPart -eq "2015Plus") { "2015+" } else { $versionPart }
 
-        # Build path to architecture folder
+        # Build path to architecture folder (where version subdirectories live)
         $archPath = "manifests/m/$vendor/$product/$folderYear/$arch"
         $archUrl = "https://api.github.com/repos/microsoft/winget-pkgs/contents/$archPath"
 
@@ -71,9 +71,12 @@ function Get-LatestVersionFromManifestPath {
         # Get list of version folders
         $versionDirs = Invoke-WithRetry -Script { 
             Invoke-RestMethod -Uri $archUrl -Headers $Headers -ErrorAction Stop 
-        } -Attempts 1 -DelaySeconds 1
+        } -Attempts 2 -DelaySeconds 2
 
-        if (-not $versionDirs) { return $null }
+        if (-not $versionDirs) { 
+            Write-Host "  ⚠ No version directories found at: $archPath" -ForegroundColor DarkGray
+            return $null 
+        }
 
         # Extract and sort version folders
         $versions = @()
@@ -83,7 +86,10 @@ function Get-LatestVersionFromManifestPath {
             }
         }
 
-        if ($versions.Count -eq 0) { return $null }
+        if ($versions.Count -eq 0) { 
+            Write-Host "  ⚠ No versions found" -ForegroundColor DarkGray
+            return $null 
+        }
 
         # Sort by semantic version (descending)
         $parsed = @()
@@ -92,12 +98,13 @@ function Get-LatestVersionFromManifestPath {
                 $ver = [version]$v
                 $parsed += @{name=$v; ver=$ver}
             } catch {
-                $parsed += @{name=$v; ver=$null}
+                # Fallback: treat as string if not semver
+                $parsed += @{name=$v; ver=[version]"0.0.0.0"}
             }
         }
 
-        $withVer = $parsed | Where-Object { $null -ne $_.ver } | Sort-Object -Property ver -Descending
-        $chosenVersion = if ($withVer.Count -gt 0) { $withVer[0].name } else { ($versions | Sort-Object -Descending)[0] }
+        $sorted = $parsed | Sort-Object -Property @{Expression={$_.ver}; Descending=$true}
+        $chosenVersion = $sorted[0].name
 
         if ([string]::IsNullOrWhiteSpace($chosenVersion)) { return $null }
 
@@ -108,7 +115,6 @@ function Get-LatestVersionFromManifestPath {
         return $null
     }
 }
-
 # Main workflow
 Write-Host "🔍 Checking for updates in Winget..." -ForegroundColor Cyan
 
