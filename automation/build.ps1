@@ -224,13 +224,6 @@ foreach ($file in $downloadedFiles) {
 
 Write-Host "✔ Packages bundled ($($downloadedFiles.Count) files)"
 
-# Cleanup downloads directory
-Write-Host "`n🧹 Cleaning up temporary downloads..." -ForegroundColor Cyan
-if (Test-Path $downloadDir) {
-    Remove-Item -Path $downloadDir -Recurse -Force -ErrorAction SilentlyContinue
-    Write-Host "✔ Cleanup complete"
-}
-
 # Validate all packages are present before proceeding
 Write-Host "`n✅ Validating package bundle..." -ForegroundColor Cyan
 $expectedCount = $downloadedFiles.Count
@@ -263,6 +256,12 @@ Write-Host "  Embedding packages into installer..." -ForegroundColor DarkGray
 
 $embeddedPackages = "@{"
 foreach ($file in $downloadedFiles) {
+    # Read from the original download location (not the copied packages subfolder)
+    if (-not (Test-Path $file.FilePath)) {
+        Write-Error "❌ Package file not found for embedding: $($file.FilePath)"
+        exit 1
+    }
+    
     $bytes = [System.IO.File]::ReadAllBytes($file.FilePath)
     $base64 = [Convert]::ToBase64String($bytes)
     $embeddedPackages += "`n    '$($file.FileName)' = '$base64'"
@@ -422,6 +421,13 @@ if (Test-Path $outputFile) {
 
 $checksumContent | Out-File $checksumFile -Encoding ASCII -Force
 Write-Host "✔ Checksums saved to: SHA256.txt"
+
+# Cleanup downloads directory - moved to the end after EXE creation
+Write-Host "`n🧹 Cleaning up temporary downloads..." -ForegroundColor Cyan
+if (Test-Path $downloadDir) {
+    Remove-Item -Path $downloadDir -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Host "✔ Cleanup complete"
+}
 
 Write-Host "`n✅ Build completed successfully!" -ForegroundColor Green
 Write-Host "📦 Output: $outputFile"
