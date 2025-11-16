@@ -109,16 +109,24 @@ function Get-LatestVersionFromManifestPath {
         }
 
         # Sort versions: highest first
+        Write-Host "  DEBUG: Before sort - parsed count: $($parsed.Count)" -ForegroundColor DarkGray
         $sorted = @($parsed | Sort-Object -Property @{Expression={$_.ver}; Descending=$true}) | Where-Object { $_ }
+        Write-Host "  DEBUG: After sort - sorted count: $($sorted.Count)" -ForegroundColor DarkGray
         
         if ($sorted.Count -eq 0) {
+            Write-Host "  DEBUG: sorted is empty after filter" -ForegroundColor DarkRed
+            Write-Host "  DEBUG: raw sorted before filter: $((@($parsed | Sort-Object -Property @{Expression={$_.ver}; Descending=$true})).Count)" -ForegroundColor DarkRed
             Write-Host "  ⚠ Failed to sort versions" -ForegroundColor DarkGray
             return $null
         }
 
+        Write-Host "  DEBUG: sorted[0] = $($sorted[0] | ConvertTo-Json)" -ForegroundColor DarkGray
         $chosenVersion = $sorted[0].name
 
-        if ([string]::IsNullOrWhiteSpace($chosenVersion)) { return $null }
+        if ([string]::IsNullOrWhiteSpace($chosenVersion)) { 
+            Write-Host "  DEBUG: chosenVersion is empty/null" -ForegroundColor DarkRed
+            return $null 
+        }
 
         Write-Host "  Latest version: $chosenVersion" -ForegroundColor DarkGray
         return $chosenVersion
