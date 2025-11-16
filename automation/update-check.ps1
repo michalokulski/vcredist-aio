@@ -55,65 +55,31 @@ function Get-LatestVersionFromManifestPath {
     )
 
     try {
-        # Fallback versions for packages without current manifests in winget-pkgs
-        $fallbackVersions = @{
-            "Microsoft.VCRedist.2005.x86" = "8.0.61000"
-            "Microsoft.VCRedist.2005.x64" = "8.0.61000"
-            "Microsoft.VCRedist.2008.x86" = "9.0.30729.6161"
-            "Microsoft.VCRedist.2008.x64" = "9.0.30729.6161"
-            "Microsoft.VCRedist.2010.x86" = "10.0.40219"
-            "Microsoft.VCRedist.2010.x64" = "10.0.40219"
-            "Microsoft.VCRedist.2012.x86" = "11.0.61030.0"
-            "Microsoft.VCRedist.2012.x64" = "11.0.61030.0"
-            "Microsoft.VCRedist.2013.x86" = "12.0.40664.0"
-            "Microsoft.VCRedist.2013.x64" = "12.0.40664.0"
-            "Microsoft.VCRedist.2015Plus.x86" = "14.44.35211.0"
-            "Microsoft.VCRedist.2015Plus.x64" = "14.44.35211.0"
-        }
-
-        # Parse PackageId: Microsoft.VCRedist.2005.x86 or Microsoft.VCRedist.2015Plus.x64
         $parts = $PackageId -split '\.'
-        if ($parts.Length -lt 3) { 
-            if ($fallbackVersions.ContainsKey($PackageId)) { return $fallbackVersions[$PackageId] }
-            return $null 
-        }
+        if ($parts.Length -lt 3) { return $null }
 
-        $vendor = $parts[0]           # "Microsoft"
-        $product = $parts[1]          # "VCRedist"
-        $versionPart = $parts[2]      # "2005", "2008", "2015Plus", etc.
+        $vendor = $parts[0]
+        $product = $parts[1]
+        $versionPart = $parts[2]
         $arch = if ($PackageId -match "x64") { "x64" } else { "x86" }
 
         # Determine folder structure
-        # 2015+ uses: manifests/m/Microsoft/VCRedist/2015+/<arch>/<version>/
-        # Older uses: manifests/m/Microsoft/VCRedist/<year>/<arch>/<version>/
         $folderYear = if ($versionPart -eq "2015Plus") { "2015+" } else { $versionPart }
 
-        # Build the path to the architecture folder
+        # Build path to architecture folder
         $archPath = "manifests/m/$vendor/$product/$folderYear/$arch"
         $archUrl = "https://api.github.com/repos/microsoft/winget-pkgs/contents/$archPath"
 
-        Write-Host "  Trying manifest path: $archPath" -ForegroundColor DarkGray
+        Write-Host "  Querying: $archPath" -ForegroundColor DarkGray
 
-        # Get list of version folders (single attempt to avoid rate limit)
-        $versionDirs = $null
-        try {
-            $versionDirs = Invoke-RestMethod -Uri $archUrl -Headers $Headers -ErrorAction Stop
-        } catch {
-            Write-Host "  Manifest path not found, using fallback" -ForegroundColor DarkGray
-            if ($fallbackVersions.ContainsKey($PackageId)) { 
-                return $fallbackVersions[$PackageId] 
-            }
-            return $null
-        }
+        # Get list of version folders
+        $versionDirs = Invoke-WithRetry -Script { 
+            Invoke-RestMethod -Uri $archUrl -Headers $Headers -ErrorAction Stop 
+        } -Attempts 1 -DelaySeconds 1
 
-        if (-not $versionDirs) { 
-            if ($fallbackVersions.ContainsKey($PackageId)) { 
-                return $fallbackVersions[$PackageId] 
-            }
-            return $null 
-        }
+        if (-not $versionDirs) { return $null }
 
-        # Extract version folder names
+        # Extract and sort version folders
         $versions = @()
         foreach ($vd in $versionDirs) {
             if ($vd.type -eq 'dir' -and -not [string]::IsNullOrWhiteSpace($vd.name)) {
@@ -121,13 +87,7 @@ function Get-LatestVersionFromManifestPath {
             }
         }
 
-        if ($versions.Count -eq 0) {
-            Write-Host "  No version folders found, using fallback" -ForegroundColor DarkGray
-            if ($fallbackVersions.ContainsKey($PackageId)) { 
-                return $fallbackVersions[$PackageId] 
-            }
-            return $null
-        }
+        if ($versions.Count -eq 0) { return $null }
 
         # Sort by semantic version (descending)
         $parsed = @()
@@ -143,60 +103,12 @@ function Get-LatestVersionFromManifestPath {
         $withVer = $parsed | Where-Object { $_.ver -ne $null } | Sort-Object -Property ver -Descending
         $chosenVersion = if ($withVer.Count -gt 0) { $withVer[0].name } else { ($versions | Sort-Object -Descending)[0] }
 
-        if ([string]::IsNullOrWhiteSpace($chosenVersion)) {
-            if ($fallbackVersions.ContainsKey($PackageId)) { 
-                return $fallbackVersions[$PackageId] 
-            }
-            return $null
-        }
+        if ([string]::IsNullOrWhiteSpace($chosenVersion)) { return $null }
 
-        Write-Host "  Latest version folder: $chosenVersion" -ForegroundColor DarkGray
-
-        # Fetch the manifest YAML file
-        $manifestUrl = "$archUrl/$chosenVersion"
-        $manifestFiles = $null
-        try {
-            $manifestFiles = Invoke-RestMethod -Uri $manifestUrl -Headers $Headers -ErrorAction Stop
-        } catch {
-            # If manifest folder can't be read, return folder name as version
-            return $chosenVersion
-        }
-
-        if (-not $manifestFiles) { return $chosenVersion }
-
-        # Find the YAML file and extract version
-        foreach ($file in $manifestFiles) {
-            if ($file.type -eq 'file' -and ($file.name -match '\.ya?ml$')) {
-                try {
-                    $fileObj = Invoke-RestMethod -Uri $file.url -Headers $Headers -ErrorAction Stop
-                    if ($fileObj -and $fileObj.content) {
-                        $content = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($fileObj.content))
-                        
-                        # Try to extract version from YAML
-                        foreach ($regex in @('^[ \t]*Version:[ \t]*(.+)$', '^[ \t]*PackageVersion:[ \t]*(.+)$', '^[ \t]*packageVersion:[ \t]*(.+)$')) {
-                            $m = [regex]::Match($content, $regex, [System.Text.RegularExpressions.RegexOptions]::Multiline)
-                            if ($m.Success) { 
-                                $extractedVersion = $m.Groups[1].Value.Trim()
-                                Write-Host "  Extracted version: $extractedVersion" -ForegroundColor DarkGray
-                                return $extractedVersion 
-                            }
-                        }
-                    }
-                } catch {
-                    # Continue to next file
-                }
-            }
-        }
-
-        # Fallback: return the folder name as version
-        Write-Host "  Using folder name as version: $chosenVersion" -ForegroundColor DarkGray
+        Write-Host "  Latest version: $chosenVersion" -ForegroundColor DarkGray
         return $chosenVersion
     } catch {
         Write-Host "  Error: $($_.Exception.Message)" -ForegroundColor DarkGray
-        # Check if fallback exists
-        if ($fallbackVersions.ContainsKey($PackageId)) { 
-            return $fallbackVersions[$PackageId] 
-        }
         return $null
     }
 }
@@ -204,7 +116,6 @@ function Get-LatestVersionFromManifestPath {
 # Main workflow
 Write-Host "🔍 Checking for updates in Winget..." -ForegroundColor Cyan
 
-# Load packages
 $packagesJson = Get-Content $PackagesFile -Raw | ConvertFrom-Json
 $packages = $packagesJson.packages
 
@@ -220,13 +131,12 @@ foreach ($pkg in $packages) {
     $latestVersion = Get-LatestVersionFromManifestPath -PackageId $pkg.id -Headers $headers
 
     if ($latestVersion) {
-        Write-Host "ℹ Using winget-pkgs repo version: $latestVersion"
+        Write-Host "ℹ Latest version: $latestVersion"
     } else {
         Write-Warning "⚠ Failed to find version for: $($pkg.id)"
         continue
     }
 
-    # Compare versions
     if ([string]::IsNullOrWhiteSpace($pkg.version)) {
         Write-Host "📌 Local version empty → marking as outdated"
         $pkg.version = $latestVersion
@@ -244,7 +154,6 @@ foreach ($pkg in $packages) {
     }
 }
 
-# Save updated packages and create update branch if needed
 if ($updatesFound) {
     Write-Host "`n📝 Updates found, saving packages.json..." -ForegroundColor Green
     $packagesJson | ConvertTo-Json -Depth 10 | Out-File $PackagesFile -Encoding UTF8

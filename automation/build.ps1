@@ -22,9 +22,6 @@ function Invoke-WithRetry {
     for ($i = 1; $i -le $Attempts; $i++) {
         try {
             $result = & $Script
-            if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
-                throw "Command failed with exit code $LASTEXITCODE"
-            }
             return $result
         } catch {
             if ($i -lt $Attempts) {
@@ -55,44 +52,35 @@ function Get-DownloadUrlFromManifest {
         $parts = $PackageId -split '\.'
         if ($parts.Length -lt 3) { return $null }
 
-        $vendor = $parts[0]           # "Microsoft"
-        $product = $parts[1]          # "VCRedist"
-        $versionPart = $parts[2]      # "2005", "2008", "2015Plus", etc.
+        $vendor = $parts[0]
+        $product = $parts[1]
+        $versionPart = $parts[2]
         $arch = if ($PackageId -match "x64") { "x64" } else { "x86" }
 
         # Determine folder structure
         $folderYear = if ($versionPart -eq "2015Plus") { "2015+" } else { $versionPart }
 
-        # Build the path to the version manifest
-        $manifestPath = "manifests/m/$vendor/$product/$folderYear/$arch/$Version"
-        $manifestUrl = "https://api.github.com/repos/microsoft/winget-pkgs/contents/$manifestPath"
+        # Build path to version folder
+        $versionPath = "manifests/m/$vendor/$product/$folderYear/$arch/$Version"
+        $versionUrl = "https://api.github.com/repos/microsoft/winget-pkgs/contents/$versionPath"
 
-        Write-Host "    Fetching manifest from: $manifestPath" -ForegroundColor DarkGray
+        Write-Host "    Fetching manifest: $versionPath" -ForegroundColor DarkGray
 
         # Get manifest files
         $manifestFiles = Invoke-WithRetry -Script { 
-            Invoke-RestMethod -Uri $manifestUrl -Headers $Headers -ErrorAction Stop 
+            Invoke-RestMethod -Uri $versionUrl -Headers $Headers -ErrorAction Stop 
         } -Attempts 2 -DelaySeconds 2
 
         if (-not $manifestFiles) { return $null }
 
-        # Find the main YAML file (usually installer or locale YAML)
-        $installerYaml = $null
-        foreach ($file in $manifestFiles) {
-            if ($file.type -eq 'file' -and ($file.name -match 'installer\.ya?ml$|^[a-z]{2}-[A-Z]{2}\.ya?ml$')) {
-                $installerYaml = $file
-                break
-            }
-        }
-
-        if (-not $installerYaml) {
-            # Fallback: try any YAML file
-            $installerYaml = $manifestFiles | Where-Object { $_.type -eq 'file' -and $_.name -match '\.ya?ml$' } | Select-Object -First 1
-        }
+        # Find the installer YAML file
+        $installerYaml = $manifestFiles | Where-Object { 
+            $_.type -eq 'file' -and $_.name -match 'installer\.ya?ml$' 
+        } | Select-Object -First 1
 
         if (-not $installerYaml) { return $null }
 
-        # Fetch and parse the YAML content
+        # Fetch and parse YAML content
         $fileObj = Invoke-WithRetry -Script { 
             Invoke-RestMethod -Uri $installerYaml.url -Headers $Headers -ErrorAction Stop 
         } -Attempts 2 -DelaySeconds 2
@@ -101,27 +89,16 @@ function Get-DownloadUrlFromManifest {
 
         $content = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($fileObj.content))
 
-        # Extract download URL from YAML (common patterns)
-        $patterns = @(
-            'InstallerUrl:\s*(.+?)(?:\s|$)',
-            'Url:\s*(.+?)(?:\s|$)',
-            'url:\s*(.+?)(?:\s|$)',
-            'InstallerUrl:\s*([^\s]+)',
-            'DownloadUrl:\s*([^\s]+)'
-        )
-
-        foreach ($pattern in $patterns) {
-            $match = [regex]::Match($content, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [System.Text.RegularExpressions.RegexOptions]::Multiline)
-            if ($match.Success) {
-                $url = $match.Groups[1].Value.Trim() -replace '^["'']|["'']$'
-                if ($url -match '^https?://' -and $url -match '\.exe$') {
-                    Write-Host "    Found URL: $url" -ForegroundColor DarkGray
-                    return $url
-                }
-            }
+        # Extract InstallerUrl from YAML
+        $urlMatch = [regex]::Match($content, 'InstallerUrl:\s*([^\s#]+)', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        
+        if ($urlMatch.Success) {
+            $url = $urlMatch.Groups[1].Value.Trim() -replace '^["\']|["\']$'
+            Write-Host "    Found URL: $url" -ForegroundColor DarkGray
+            return $url
         }
 
-        Write-Host "    No download URL found in manifest" -ForegroundColor DarkGray
+        Write-Host "    No InstallerUrl found in manifest" -ForegroundColor DarkGray
         return $null
     } catch {
         Write-Host "    Error fetching manifest: $($_.Exception.Message)" -ForegroundColor DarkGray
@@ -149,55 +126,49 @@ $headers = @{ 'User-Agent' = 'vcredist-aio-bot' }
 if ($token) { $headers.Authorization = "token $token" }
 
 $failedDownloads = @()
+$downloadedFiles = @()
 
 foreach ($pkg in $packages) {
     Write-Host "`n➡ Processing: $($pkg.id)"
 
     if ([string]::IsNullOrWhiteSpace($pkg.version)) {
-        Write-Warning "⚠ No version specified for $($pkg.id), skipping..."
+        Write-Warning "⚠ No version specified, skipping..."
         continue
     }
 
     Write-Host "  Version: $($pkg.version)"
 
-    # Try to get direct download URL from manifest
+    # Get download URL from manifest
     $downloadUrl = Get-DownloadUrlFromManifest -PackageId $pkg.id -Version $pkg.version -Headers $headers
 
-    if ($downloadUrl) {
-        # Download directly using the URL
-        Write-Host "  Downloading from direct URL..." -ForegroundColor Cyan
-        $downloadResult = Invoke-WithRetry -Script {
-            $fileName = Split-Path $downloadUrl -Leaf
-            $outputPath = Join-Path $downloadDir $fileName
-            Invoke-WebRequest -Uri $downloadUrl -OutFile $outputPath -UseBasicParsing -ErrorAction Stop
-            return $outputPath
-        } -Attempts 3 -DelaySeconds 5
+    if (-not $downloadUrl) {
+        Write-Warning "⚠ Failed to get download URL for: $($pkg.id)"
+        $failedDownloads += $pkg.id
+        continue
+    }
 
-        if ($downloadResult -and (Test-Path $downloadResult)) {
-            Write-Host "  ✔ Downloaded successfully: $(Split-Path $downloadResult -Leaf)"
-        } else {
-            Write-Warning "⚠ Failed to download from URL"
-            $failedDownloads += $pkg.id
+    # Download the file
+    $downloadResult = Invoke-WithRetry -Script {
+        # Generate unique filename based on PackageId and version
+        $fileName = "$($pkg.id.Replace('.', '_'))_$($pkg.version).exe"
+        $outputPath = Join-Path $downloadDir $fileName
+        
+        Write-Host "    Downloading to: $fileName" -ForegroundColor DarkGray
+        Invoke-WebRequest -Uri $downloadUrl -OutFile $outputPath -UseBasicParsing -ErrorAction Stop
+        return $outputPath
+    } -Attempts 3 -DelaySeconds 5
+
+    if ($downloadResult -and (Test-Path $downloadResult)) {
+        $size = (Get-Item $downloadResult).Length / 1MB
+        Write-Host "  ✔ Downloaded ($([math]::Round($size, 2)) MB)"
+        $downloadedFiles += @{
+            PackageId = $pkg.id
+            FilePath = $downloadResult
+            FileName = Split-Path $downloadResult -Leaf
         }
     } else {
-        # Fallback: try winget download
-        Write-Host "  Attempting winget download (fallback)..." -ForegroundColor Cyan
-        $downloadResult = Invoke-WithRetry -Script {
-            & winget download `
-                --id $pkg.id `
-                --version $pkg.version `
-                --source winget `
-                --accept-source-agreements `
-                --accept-package-agreements `
-                --output $downloadDir 2>&1
-        } -Attempts 2 -DelaySeconds 3
-
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warning "⚠ Failed to download: $($pkg.id) v$($pkg.version)"
-            $failedDownloads += $pkg.id
-        } else {
-            Write-Host "  ✔ Downloaded successfully"
-        }
+        Write-Warning "⚠ Failed to download: $($pkg.id)"
+        $failedDownloads += $pkg.id
     }
 }
 
@@ -206,101 +177,117 @@ if ($failedDownloads.Count -gt 0) {
     $failedDownloads | ForEach-Object { Write-Warning "  - $_" }
 }
 
-# Get list of downloaded executables
-$executables = Get-ChildItem -Path $downloadDir -Filter "*.exe" -Recurse
-Write-Host "`n📦 Found $($executables.Count) executables"
-
-if ($executables.Count -eq 0) {
-    Write-Error "❌ No executables found in download directory. Build failed."
+# Verify we have at least some files
+if ($downloadedFiles.Count -eq 0) {
+    Write-Error "❌ No packages downloaded. Build failed."
     exit 1
 }
 
-# Create installer script
+Write-Host "`n📦 Downloaded $($downloadedFiles.Count) packages"
+
+# Create installer script with file mappings
 Write-Host "`n📄 Generating installer script..." -ForegroundColor Cyan
 
 $scriptPath = Join-Path $OutputDir "installer.ps1"
 
-$installerScript = @'
+# Build file list for installer
+$fileList = $downloadedFiles | ForEach-Object {
+    "        @{Package='$($_.PackageId)'; File='$($_.FileName)'}"
+} | Join-String -Separator "`n"
+
+$installerScript = @"
 # VCRedist AIO Offline Installer
 # Generated by build script
 
 param(
-    [switch] $Silent = $false
+    [switch] `\`$Silent = `\`$false
 )
 
-$ErrorActionPreference = "Continue"
-$VerbosePreference = "SilentlyContinue"
+`\`$ErrorActionPreference = "Continue"
+`\`$VerbosePreference = "SilentlyContinue"
 
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$packageDir = Join-Path $scriptDir "packages"
+`\`$scriptDir = Split-Path -Parent `\`$MyInvocation.MyCommand.Path
+`\`$packageDir = Join-Path `\`$scriptDir "packages"
 
 Write-Host "🚀 Installing Microsoft Visual C++ Redistributables..."
 
-if (-not (Test-Path $packageDir)) {
-    Write-Error "Package directory not found: $packageDir"
+if (-not (Test-Path `\`$packageDir)) {
+    Write-Error "Package directory not found: `\`$packageDir"
     exit 1
 }
 
-$exeFiles = @(Get-ChildItem -Path $packageDir -Filter "*.exe" -Recurse)
+# File mappings
+`\`$packages = @(
+$fileList
+)
 
-if ($exeFiles.Count -eq 0) {
-    Write-Error "No executables found in: $packageDir"
+if (`\`$packages.Count -eq 0) {
+    Write-Error "No packages defined"
     exit 1
 }
 
-Write-Host "📦 Found $($exeFiles.Count) packages to install"
+Write-Host "📦 Installing `\`$(`\`$packages.Count) packages..."
 
-$installed = 0
-$failed = 0
+`\`$installed = 0
+`\`$failed = 0
 
-foreach ($exe in $exeFiles) {
-    Write-Host "`n➡ Installing: $($exe.Name)..."
+foreach (`\`$pkg in `\`$packages) {
+    `\`$exePath = Join-Path `\`$packageDir `\`$pkg.File
+    
+    if (-not (Test-Path `\`$exePath)) {
+        Write-Warning "  ⚠ Not found: `\`$(`\`$pkg.File)"
+        `\`$failed++
+        continue
+    }
+    
+    Write-Host "`n  ➡ Installing: `\`$(`\`$pkg.Package)..."
     
     try {
-        $args = @("/q", "/norestart")
-        if ($Silent) { $args += "/quiet" }
+        `\`$args = @("/q", "/norestart")
+        if (`\`$Silent) { `\`$args += "/quiet" }
         
-        & $exe.FullName $args
+        & `\`$exePath @args
         
-        if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 3010) {
-            Write-Host "  ✔ Installed successfully"
-            $installed++
+        if (`\`$LASTEXITCODE -eq 0 -or `\`$LASTEXITCODE -eq 3010) {
+            Write-Host "    ✔ Success"
+            `\`$installed++
         } else {
-            Write-Warning "  ⚠ Installation returned code: $LASTEXITCODE"
-            $failed++
+            Write-Warning "    ⚠ Exit code: `\`$LASTEXITCODE"
+            `\`$failed++
         }
     } catch {
-        Write-Error "  ❌ Failed to execute: $($_.Exception.Message)"
-        $failed++
+        Write-Error "    ❌ Error: `\`$(`\`$_.Exception.Message)"
+        `\`$failed++
     }
 }
 
-Write-Host "`n✅ Installation complete: $installed installed, $failed failed"
+Write-Host "`n✅ Installation complete: `\`$installed installed, `\`$failed failed"
 
-if ($failed -gt 0) {
+if (`\`$failed -gt 0) {
     exit 1
 }
 
 exit 0
-'@
+"@
 
 $installerScript | Out-File $scriptPath -Encoding UTF8 -Force
-Write-Host "✔ Installer script created: $scriptPath"
+Write-Host "✔ Installer script created"
 
 Write-Host "`n📋 Creating package bundle..." -ForegroundColor Cyan
 
-# Copy all executables to packages subfolder
+# Create packages subfolder with organized structure
 $packagesSubDir = Join-Path $OutputDir "packages"
 New-Item -ItemType Directory -Path $packagesSubDir -Force | Out-Null
 
-foreach ($exe in $executables) {
-    Copy-Item -Path $exe.FullName -Destination $packagesSubDir -Force
-    Write-Host "  ✔ Copied: $($exe.Name)"
+foreach ($file in $downloadedFiles) {
+    Copy-Item -Path $file.FilePath -Destination (Join-Path $packagesSubDir $file.FileName) -Force
+    $size = (Get-Item $file.FilePath).Length / 1MB
+    Write-Host "  ✔ $($file.FileName) ($([math]::Round($size, 2)) MB)"
 }
 
-Write-Host "✔ Packages bundled"
+Write-Host "✔ Packages bundled ($($downloadedFiles.Count) files)"
 
-# Ensure ps2exe module is available and functional
+# Ensure ps2exe module is available
 Write-Host "`n📦 Verifying ps2exe environment..." -ForegroundColor Cyan
 
 $ps2exeCheck = pwsh -Command "
@@ -328,8 +315,7 @@ Write-Host "`n🔨 Converting installer.ps1 → EXE using ps2exe..." -Foreground
 
 $cfg = Get-Content $PSEXEPath -Raw | ConvertFrom-Json
 $inputFile = $scriptPath
-$outputFile = if ($cfg.output) { Join-Path $OutputDir (Split-Path $cfg.output -Leaf) } else { Join-Path $OutputDir "VC_Redist_AIO_Offline.exe" }
-$icon = $cfg.icon
+$outputFile = Join-Path $OutputDir "VC_Redist_AIO_Offline.exe"
 $requireAdmin = $cfg.requireAdmin
 $noConsole = $cfg.noConsole
 
@@ -338,13 +324,6 @@ Import-Module ps2exe -ErrorAction Stop
 Invoke-ps2exe -InputFile `"$inputFile`" -OutputFile `"$outputFile`" -RequireAdministrator:`$$requireAdmin -NoConsole:`$$noConsole -ErrorAction Stop
 "@
 
-if ($icon -and (Test-Path $icon)) {
-    $ps2exeCmd = @"
-Import-Module ps2exe -ErrorAction Stop
-Invoke-ps2exe -InputFile `"$inputFile`" -OutputFile `"$outputFile`" -Icon `"$icon`" -RequireAdministrator:`$$requireAdmin -NoConsole:`$$noConsole -ErrorAction Stop
-"@
-}
-
 $ps2exeResult = pwsh -Command $ps2exeCmd
 
 if ($LASTEXITCODE -ne 0) {
@@ -352,24 +331,25 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# Verify output EXE exists
 if (-not (Test-Path $outputFile)) {
     Write-Error "❌ Output EXE not created: $outputFile"
     exit 1
 }
 
-Write-Host "✔ EXE created successfully: $outputFile"
+Write-Host "✔ EXE created: $outputFile"
 
 # Create SHA256 checksum
 if (Test-Path $outputFile) {
     $hash = Get-FileHash $outputFile -Algorithm SHA256
     $checksumFile = Join-Path (Split-Path $outputFile -Parent) "SHA256.txt"
+    
     "$($hash.Hash)  $(Split-Path $outputFile -Leaf)" | Out-File $checksumFile -Encoding ASCII -Force
     Write-Host "🔐 SHA256: $($hash.Hash)"
-    Write-Host "📄 Checksum saved to: $checksumFile"
+    Write-Host "📄 Checksum: $checksumFile"
 }
 
 Write-Host "`n✅ Build completed successfully!" -ForegroundColor Green
 Write-Host "📦 Output: $outputFile"
+Write-Host "📊 Total packages: $($downloadedFiles.Count)"
 
 exit 0
