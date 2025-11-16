@@ -1,3 +1,4 @@
+# filepath: .gitignore
 # Ignore build output
 dist/*.exe
 dist/*.zip
@@ -19,6 +20,7 @@ temp-extract/
 
 # Ignore artifact staging
 artifact/
+release-package/
 
 # Ignore PowerShell temp and cache
 *.log
@@ -35,3 +37,4 @@ Thumbs.db
 
 # Ignore git helper files
 update-branch.txt
+release-notes.md

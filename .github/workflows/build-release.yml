@@ -35,49 +35,144 @@ jobs:
           }
           Write-Host "✔ All required artifacts present"
 
+      - name: Extract version for release name
+        id: get-version
+        run: |
+          $packagesJson = Get-Content packages.json -Raw | ConvertFrom-Json
+          $vcredist2015Plus = $packagesJson.packages | Where-Object { $_.id -eq "Microsoft.VCRedist.2015Plus.x64" }
+          
+          if ($vcredist2015Plus -and $vcredist2015Plus.version) {
+            $version = $vcredist2015Plus.version
+            Write-Host "Found version: $version"
+            Add-Content -Path $env:GITHUB_OUTPUT -Value "version=$version"
+            Add-Content -Path $env:GITHUB_OUTPUT -Value "release_name=VCRedist AIO $version"
+          } else {
+            Write-Error "Could not find Microsoft.VCRedist.2015Plus.x64 version"
+            exit 1
+          }
+
       - name: Create ZIP archive
         run: |
-          $sourceDir = 'dist'
-          $zipPath = 'artifact/vc_redist_aio_offline.zip'
+          # Clean up any existing release-package directory
+          if (Test-Path 'release-package') {
+            Remove-Item -Path 'release-package' -Recurse -Force
+          }
           
+          # Create clean release structure
+          $releaseDir = 'release-package'
+          $packagesDir = Join-Path $releaseDir 'packages'
+          
+          New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
+          New-Item -ItemType Directory -Path $packagesDir -Force | Out-Null
+          
+          # Copy packages
+          Copy-Item -Path 'dist/packages/*' -Destination $packagesDir -Force
+          
+          # Copy installer script
+          Copy-Item -Path 'dist/installer.ps1' -Destination $releaseDir -Force
+          
+          # Copy SHA256.txt
+          Copy-Item -Path 'dist/SHA256.txt' -Destination $releaseDir -Force
+          
+          # Create ZIP
           New-Item -ItemType Directory -Path artifact -Force | Out-Null
-          Compress-Archive -Path $sourceDir/* -DestinationPath $zipPath -Force
+          Compress-Archive -Path "$releaseDir/*" -DestinationPath 'artifact/vc_redist_aio_offline.zip' -Force
           
-          Write-Host "✔ ZIP created: $zipPath"
+          Write-Host "✔ ZIP created with proper structure"
 
-      - name: Compute SHA256
+      - name: Compute SHA256 for all assets
         id: compute-sha
         run: |
-          $file = 'artifact/vc_redist_aio_offline.zip'
-          if (Test-Path $file) {
-            $sha = (Get-FileHash -Algorithm SHA256 $file).Hash
-            Write-Host "Computed SHA256: $sha"
-            Add-Content -Path $env:GITHUB_OUTPUT -Value "sha=$sha"
+          $exeFile = 'dist/VC_Redist_AIO_Offline.exe'
+          $zipFile = 'artifact/vc_redist_aio_offline.zip'
+          
+          $exeSha = (Get-FileHash -Algorithm SHA256 $exeFile).Hash
+          $zipSha = (Get-FileHash -Algorithm SHA256 $zipFile).Hash
+          
+          Write-Host "EXE SHA256: $exeSha"
+          Write-Host "ZIP SHA256: $zipSha"
+          
+          # Create combined checksum file
+          $checksumContent = @"
+          $exeSha  VC_Redist_AIO_Offline.exe
+          $zipSha  vc_redist_aio_offline.zip
+          "@
+          
+          $checksumContent | Out-File 'artifact/SHA256SUMS.txt' -Encoding ASCII -Force
+          
+          # Output for release notes
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "exe_sha=$exeSha"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "zip_sha=$zipSha"
+
+      - name: Generate release notes
+        id: release-notes
+        run: |
+          $packagesJson = Get-Content packages.json -Raw | ConvertFrom-Json
+          
+          $notes = @"
+          # VCRedist AIO Offline Installer
+          
+          **SHA256 Checksums:**
+          ``````
+          ${{ steps.compute-sha.outputs.exe_sha }}  VC_Redist_AIO_Offline.exe
+          ${{ steps.compute-sha.outputs.zip_sha }}  vc_redist_aio_offline.zip
+          ``````
+          
+          ## Included Packages
+          
+          | Package | Version |
+          |---------|---------|
+          "@
+          
+          foreach ($pkg in $packagesJson.packages) {
+            $name = $pkg.id -replace 'Microsoft\.', ''
+            $version = $pkg.version
+            $notes += "`n| $name | $version |"
           }
+          
+          $notes += @"
+          
+          
+          ## Installation
+          
+          ### Option 1: EXE (Recommended)
+          1. Download ``VC_Redist_AIO_Offline.exe``
+          2. Run as Administrator
+          3. Check log file: ``vcredist-install-YYYYMMDD-HHMMSS.log``
+          
+          ### Option 2: PowerShell Script
+          1. Download and extract ``vc_redist_aio_offline.zip``
+          2. Run as Administrator: ``.\installer.ps1``
+          3. Optional flags: ``-Silent``, ``-SkipValidation``
+          
+          ## What's Inside
+          
+          - **Visual C++ 2005** (x86/x64)
+          - **Visual C++ 2008** (x86/x64)
+          - **Visual C++ 2010** (x86/x64)
+          - **Visual C++ 2012** (x86/x64)
+          - **Visual C++ 2013** (x86/x64)
+          - **Visual C++ 2015-2022** (x86/x64) - Unified runtime
+          - **Visual Studio Tools for Office Runtime (VSTOR)**
+          
+          All packages are official Microsoft redistributables downloaded from Winget manifests.
+          "@
+          
+          # Save to file for use in release
+          $notes | Out-File 'release-notes.md' -Encoding UTF8 -Force
+          
+          Write-Host "Release notes generated"
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
+          name: ${{ steps.get-version.outputs.release_name }}
+          tag_name: v${{ steps.get-version.outputs.version }}
+          body_path: release-notes.md
           files: |
             dist/VC_Redist_AIO_Offline.exe
-            dist/SHA256.txt
             artifact/vc_redist_aio_offline.zip
-          body: |
-            # VCRedist AIO Offline Installer
-            
-            **SHA256 Checksums:**
-            ```
-            ${{ steps.compute-sha.outputs.sha }}  vc_redist_aio_offline.zip
-            ```
-            
-            All Visual C++ Redistributables included:
-            - 2005 (x86/x64)
-            - 2008 (x86/x64)
-            - 2010 (x86/x64)
-            - 2012 (x86/x64)
-            - 2013 (x86/x64)
-            - 2015+ (x86/x64)
-          tag_name: release-${{ github.run_number }}
+            artifact/SHA256SUMS.txt
           draft: false
           prerelease: false
         env:
