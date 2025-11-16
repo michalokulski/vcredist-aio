@@ -19,13 +19,9 @@ function Invoke-WithRetry {
     for ($i = 1; $i -le $Attempts; $i++) {
         try {
             $result = & $Script
-            if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
-                throw "Command failed with exit code $LASTEXITCODE"
-            }
             return $result
         } catch {
             $msg = $_.Exception.Message
-            # Check for GitHub API rate limit (HTTP 403)
             if ($msg -match "403|rate limit") {
                 Write-Host "⏳ GitHub API rate limit detected. Waiting 90 seconds..." -ForegroundColor Cyan
                 Start-Sleep -Seconds 90
@@ -100,7 +96,7 @@ function Get-LatestVersionFromManifestPath {
             }
         }
 
-        $withVer = $parsed | Where-Object { $_.ver -ne $null } | Sort-Object -Property ver -Descending
+        $withVer = $parsed | Where-Object { $null -ne $_.ver } | Sort-Object -Property ver -Descending
         $chosenVersion = if ($withVer.Count -gt 0) { $withVer[0].name } else { ($versions | Sort-Object -Descending)[0] }
 
         if ([string]::IsNullOrWhiteSpace($chosenVersion)) { return $null }
