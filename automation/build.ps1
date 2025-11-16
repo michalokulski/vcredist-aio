@@ -41,6 +41,94 @@ function Invoke-WithRetry {
     }
 }
 
+function Get-DownloadUrlFromManifest {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $PackageId,
+        [Parameter(Mandatory = $true)]
+        [string] $Version,
+        [Parameter(Mandatory = $true)]
+        [hashtable] $Headers
+    )
+
+    try {
+        $parts = $PackageId -split '\.'
+        if ($parts.Length -lt 3) { return $null }
+
+        $vendor = $parts[0]           # "Microsoft"
+        $product = $parts[1]          # "VCRedist"
+        $versionPart = $parts[2]      # "2005", "2008", "2015Plus", etc.
+        $arch = if ($PackageId -match "x64") { "x64" } else { "x86" }
+
+        # Determine folder structure
+        $folderYear = if ($versionPart -eq "2015Plus") { "2015+" } else { $versionPart }
+
+        # Build the path to the version manifest
+        $manifestPath = "manifests/m/$vendor/$product/$folderYear/$arch/$Version"
+        $manifestUrl = "https://api.github.com/repos/microsoft/winget-pkgs/contents/$manifestPath"
+
+        Write-Host "    Fetching manifest from: $manifestPath" -ForegroundColor DarkGray
+
+        # Get manifest files
+        $manifestFiles = Invoke-WithRetry -Script { 
+            Invoke-RestMethod -Uri $manifestUrl -Headers $Headers -ErrorAction Stop 
+        } -Attempts 2 -DelaySeconds 2
+
+        if (-not $manifestFiles) { return $null }
+
+        # Find the main YAML file (usually installer or locale YAML)
+        $installerYaml = $null
+        foreach ($file in $manifestFiles) {
+            if ($file.type -eq 'file' -and ($file.name -match 'installer\.ya?ml$|^[a-z]{2}-[A-Z]{2}\.ya?ml$')) {
+                $installerYaml = $file
+                break
+            }
+        }
+
+        if (-not $installerYaml) {
+            # Fallback: try any YAML file
+            $installerYaml = $manifestFiles | Where-Object { $_.type -eq 'file' -and $_.name -match '\.ya?ml$' } | Select-Object -First 1
+        }
+
+        if (-not $installerYaml) { return $null }
+
+        # Fetch and parse the YAML content
+        $fileObj = Invoke-WithRetry -Script { 
+            Invoke-RestMethod -Uri $installerYaml.url -Headers $Headers -ErrorAction Stop 
+        } -Attempts 2 -DelaySeconds 2
+
+        if (-not $fileObj -or -not $fileObj.content) { return $null }
+
+        $content = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($fileObj.content))
+
+        # Extract download URL from YAML (common patterns)
+        $patterns = @(
+            'InstallerUrl:\s*(.+?)(?:\s|$)',
+            'Url:\s*(.+?)(?:\s|$)',
+            'url:\s*(.+?)(?:\s|$)',
+            'InstallerUrl:\s*([^\s]+)',
+            'DownloadUrl:\s*([^\s]+)'
+        )
+
+        foreach ($pattern in $patterns) {
+            $match = [regex]::Match($content, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [System.Text.RegularExpressions.RegexOptions]::Multiline)
+            if ($match.Success) {
+                $url = $match.Groups[1].Value.Trim() -replace '^["'']|["'']$'
+                if ($url -match '^https?://' -and $url -match '\.exe$') {
+                    Write-Host "    Found URL: $url" -ForegroundColor DarkGray
+                    return $url
+                }
+            }
+        }
+
+        Write-Host "    No download URL found in manifest" -ForegroundColor DarkGray
+        return $null
+    } catch {
+        Write-Host "    Error fetching manifest: $($_.Exception.Message)" -ForegroundColor DarkGray
+        return $null
+    }
+}
+
 Write-Host "🚀 Building VCRedist AIO Offline Installer..." -ForegroundColor Cyan
 
 # Load packages
@@ -56,6 +144,10 @@ New-Item -ItemType Directory -Path $downloadDir -Force | Out-Null
 
 Write-Host "📥 Downloading VCRedist packages..." -ForegroundColor Cyan
 
+$token = $env:GITHUB_TOKEN
+$headers = @{ 'User-Agent' = 'vcredist-aio-bot' }
+if ($token) { $headers.Authorization = "token $token" }
+
 $failedDownloads = @()
 
 foreach ($pkg in $packages) {
@@ -68,22 +160,44 @@ foreach ($pkg in $packages) {
 
     Write-Host "  Version: $($pkg.version)"
 
-    # Download using winget
-    $downloadResult = Invoke-WithRetry -Script {
-        & winget download `
-            --id $pkg.id `
-            --version $pkg.version `
-            --source winget `
-            --accept-source-agreements `
-            --accept-package-agreements `
-            --output $downloadDir 2>&1
-    } -Attempts 2 -DelaySeconds 3
+    # Try to get direct download URL from manifest
+    $downloadUrl = Get-DownloadUrlFromManifest -PackageId $pkg.id -Version $pkg.version -Headers $headers
 
-    if ($LASTEXITCODE -ne 0) {
-        Write-Warning "⚠ Failed to download: $($pkg.id) v$($pkg.version)"
-        $failedDownloads += $pkg.id
+    if ($downloadUrl) {
+        # Download directly using the URL
+        Write-Host "  Downloading from direct URL..." -ForegroundColor Cyan
+        $downloadResult = Invoke-WithRetry -Script {
+            $fileName = Split-Path $downloadUrl -Leaf
+            $outputPath = Join-Path $downloadDir $fileName
+            Invoke-WebRequest -Uri $downloadUrl -OutFile $outputPath -UseBasicParsing -ErrorAction Stop
+            return $outputPath
+        } -Attempts 3 -DelaySeconds 5
+
+        if ($downloadResult -and (Test-Path $downloadResult)) {
+            Write-Host "  ✔ Downloaded successfully: $(Split-Path $downloadResult -Leaf)"
+        } else {
+            Write-Warning "⚠ Failed to download from URL"
+            $failedDownloads += $pkg.id
+        }
     } else {
-        Write-Host "  ✔ Downloaded successfully"
+        # Fallback: try winget download
+        Write-Host "  Attempting winget download (fallback)..." -ForegroundColor Cyan
+        $downloadResult = Invoke-WithRetry -Script {
+            & winget download `
+                --id $pkg.id `
+                --version $pkg.version `
+                --source winget `
+                --accept-source-agreements `
+                --accept-package-agreements `
+                --output $downloadDir 2>&1
+        } -Attempts 2 -DelaySeconds 3
+
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "⚠ Failed to download: $($pkg.id) v$($pkg.version)"
+            $failedDownloads += $pkg.id
+        } else {
+            Write-Host "  ✔ Downloaded successfully"
+        }
     }
 }
 
@@ -173,16 +287,9 @@ exit 0
 $installerScript | Out-File $scriptPath -Encoding UTF8 -Force
 Write-Host "✔ Installer script created: $scriptPath"
 
-# Create here-string with dynamic package list
-$packageCopyScript = @'
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$packageDir = Join-Path $scriptDir "packages"
-New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
-'@
-
 Write-Host "`n📋 Creating package bundle..." -ForegroundColor Cyan
 
-# Copy all executables to packages subfolder within the script directory
+# Copy all executables to packages subfolder
 $packagesSubDir = Join-Path $OutputDir "packages"
 New-Item -ItemType Directory -Path $packagesSubDir -Force | Out-Null
 
@@ -217,7 +324,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # Convert PowerShell script to EXE
-Write-Host "`n📦 Converting installer.ps1 → EXE using ps2exe..." -ForegroundColor Cyan
+Write-Host "`n🔨 Converting installer.ps1 → EXE using ps2exe..." -ForegroundColor Cyan
 
 $cfg = Get-Content $PSEXEPath -Raw | ConvertFrom-Json
 $inputFile = $scriptPath
