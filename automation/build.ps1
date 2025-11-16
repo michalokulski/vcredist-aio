@@ -3,10 +3,7 @@ param(
     [string] $PackagesFile,
 
     [Parameter(Mandatory = $true)]
-    [string] $OutputDir,
-
-    [Parameter(Mandatory = $true)]
-    [string] $PSEXEPath
+    [string] $OutputDir
 )
 
 $ErrorActionPreference = "Stop"
@@ -26,7 +23,6 @@ function Invoke-WithRetry {
         } catch {
             $msg = $_.Exception.Message
             
-            # Add rate limit detection
             if ($msg -match "403|rate limit") {
                 Write-Host "⏳ GitHub API rate limit detected. Waiting 90 seconds..." -ForegroundColor Cyan
                 Start-Sleep -Seconds 90
@@ -64,17 +60,14 @@ function Get-DownloadUrlFromManifest {
         $vendor = $parts[0]
         $product = $parts[1]
         
-        # Determine if this is an architecture-specific package (VCRedist)
         $isArchSpecific = $PackageId -match "VCRedist" -and $parts.Length -ge 3
         
         if ($isArchSpecific) {
-            # VCRedist packages: manifests/m/Microsoft/VCRedist/2008/x64/version
             $versionPart = $parts[2]
             $arch = if ($PackageId -match "x64") { "x64" } else { "x86" }
             $folderYear = if ($versionPart -eq "2015Plus") { "2015+" } else { $versionPart }
             $versionPath = "manifests/m/$vendor/$product/$folderYear/$arch/$Version"
         } else {
-            # Other packages: manifests/m/Microsoft/VSTOR/version
             $versionPath = "manifests/m/$vendor/$product/$Version"
         }
         
@@ -82,21 +75,18 @@ function Get-DownloadUrlFromManifest {
 
         Write-Host "    Fetching manifest: $versionPath" -ForegroundColor DarkGray
 
-        # Get manifest files
         $manifestFiles = Invoke-WithRetry -Script { 
             Invoke-RestMethod -Uri $versionUrl -Headers $Headers -ErrorAction Stop 
         } -Attempts 2 -DelaySeconds 2
 
         if (-not $manifestFiles) { return $null }
 
-        # Find the installer YAML file
         $installerYaml = $manifestFiles | Where-Object { 
             $_.type -eq 'file' -and $_.name -match 'installer\.ya?ml$' 
         } | Select-Object -First 1
 
         if (-not $installerYaml) { return $null }
 
-        # Fetch and parse YAML content
         $fileObj = Invoke-WithRetry -Script { 
             Invoke-RestMethod -Uri $installerYaml.url -Headers $Headers -ErrorAction Stop 
         } -Attempts 2 -DelaySeconds 2
@@ -105,14 +95,12 @@ function Get-DownloadUrlFromManifest {
 
         $content = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($fileObj.content))
 
-        # Extract InstallerUrl from YAML
         $urlMatch = [regex]::Match($content, 'InstallerUrl:\s*([^\s#]+)', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [System.Text.RegularExpressions.RegexOptions]::Multiline)
         
         if ($urlMatch.Success) {
             $url = $urlMatch.Groups[1].Value.Trim()
-            # Remove surrounding quotes if present
-            $quoteChar = [char]34  # Double quote
-            $singleQuote = [char]39  # Single quote
+            $quoteChar = [char]34
+            $singleQuote = [char]39
             while ($url.Length -gt 0 -and ($url[0] -eq $quoteChar -or $url[0] -eq $singleQuote)) {
                 $url = $url.Substring(1)
             }
@@ -131,7 +119,7 @@ function Get-DownloadUrlFromManifest {
     }
 }
 
-Write-Host "🚀 Building VCRedist AIO Offline Installer..." -ForegroundColor Cyan
+Write-Host "🚀 Building VCRedist AIO NSIS Installer..." -ForegroundColor Cyan
 
 # Load packages
 $packagesJson = Get-Content $PackagesFile -Raw | ConvertFrom-Json
@@ -163,7 +151,6 @@ foreach ($pkg in $packages) {
 
     Write-Host "  Version: $($pkg.version)"
 
-    # Get download URL from manifest
     $downloadUrl = Get-DownloadUrlFromManifest -PackageId $pkg.id -Version $pkg.version -Headers $headers
 
     if (-not $downloadUrl) {
@@ -172,9 +159,7 @@ foreach ($pkg in $packages) {
         continue
     }
 
-    # Download the file
     $downloadResult = Invoke-WithRetry -Script {
-        # Generate unique filename based on PackageId and version
         $fileName = "$($pkg.id.Replace('.', '_'))_$($pkg.version).exe"
         $outputPath = Join-Path $downloadDir $fileName
         
@@ -202,7 +187,6 @@ if ($failedDownloads.Count -gt 0) {
     $failedDownloads | ForEach-Object { Write-Warning "  - $_" }
 }
 
-# Verify we have at least some files
 if ($downloadedFiles.Count -eq 0) {
     Write-Error "❌ No packages downloaded. Build failed."
     exit 1
@@ -224,217 +208,184 @@ foreach ($file in $downloadedFiles) {
 
 Write-Host "✔ Packages bundled ($($downloadedFiles.Count) files)"
 
-# Validate all packages are present before proceeding
-Write-Host "`n✅ Validating package bundle..." -ForegroundColor Cyan
-$expectedCount = $downloadedFiles.Count
-$actualCount = (Get-ChildItem -Path $packagesSubDir -Filter "*.exe").Count
+# Ensure NSIS is installed
+Write-Host "`n🔍 Checking for NSIS..." -ForegroundColor Cyan
 
-if ($actualCount -ne $expectedCount) {
-    Write-Error "❌ Package validation failed: Expected $expectedCount files, found $actualCount"
+$nsisPath = "C:\Program Files (x86)\NSIS\makensis.exe"
+if (-not (Test-Path $nsisPath)) {
+    Write-Error "❌ NSIS not found at: $nsisPath"
+    Write-Host "Please install NSIS from: https://nsis.sourceforge.io/Download" -ForegroundColor Yellow
+    Write-Host "Or run: choco install nsis -y" -ForegroundColor Yellow
     exit 1
 }
 
-Write-Host "✔ All $actualCount packages validated" -ForegroundColor Green
+Write-Host "✔ NSIS found: $nsisPath" -ForegroundColor Green
 
-# Create self-extracting installer script
-Write-Host "`n📄 Generating self-extracting installer..." -ForegroundColor Cyan
-
-$scriptPath = Join-Path $OutputDir "installer.ps1"
-
-# Read the standalone install.ps1 template
+# Copy install.ps1 to output directory
 $installScriptPath = Join-Path $PSScriptRoot "install.ps1"
+Copy-Item -Path $installScriptPath -Destination $OutputDir -Force
 
-if (-not (Test-Path $installScriptPath)) {
-    Write-Error "❌ install.ps1 template not found at: $installScriptPath"
-    exit 1
-}
-
-$installScriptTemplate = Get-Content $installScriptPath -Raw
-
-# Embed packages as Base64 for self-extraction
-Write-Host "  Embedding packages into installer..." -ForegroundColor DarkGray
-
-$embeddedPackagesCode = "@{`n"
+# Generate file list for NSIS
+$fileList = ""
 foreach ($file in $downloadedFiles) {
-    # Read from the original download location (not the copied packages subfolder)
-    if (-not (Test-Path $file.FilePath)) {
-        Write-Error "❌ Package file not found for embedding: $($file.FilePath)"
-        exit 1
-    }
-    
-    $bytes = [System.IO.File]::ReadAllBytes($file.FilePath)
-    $base64 = [Convert]::ToBase64String($bytes)
-    $embeddedPackagesCode += "    '$($file.FileName)' = '$base64'`n"
-}
-$embeddedPackagesCode += "}"
-
-# Create wrapper template using simple string replacement to avoid escaping issues
-$wrapperTemplate = @'
-# VCRedist AIO Offline Installer
-# Generated by build script
-# Self-extracting installer with embedded packages
-
-param(
-    [switch] $Silent = $false,
-    [switch] $SkipValidation = $false
-)
-
-Write-Host "🚀 VCRedist AIO Offline Installer" -ForegroundColor Cyan
-Write-Host "Extracting embedded packages..." -ForegroundColor Cyan
-
-$scriptDir = $PSScriptRoot
-if ([string]::IsNullOrWhiteSpace($scriptDir)) {
-    $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-}
-if ([string]::IsNullOrWhiteSpace($scriptDir)) {
-    $scriptDir = Get-Location
+    $fileList += "  File `"packages\$($file.FileName)`"`n"
 }
 
-$packageDir = Join-Path $scriptDir "packages"
-$logDir = if (Test-Path env:TEMP) { $env:TEMP } else { $scriptDir }
+# Get version from 2015+ x64 package
+$vcredist2015Plus = $packages | Where-Object { $_.id -eq "Microsoft.VCRedist.2015Plus.x64" }
+$productVersion = if ($vcredist2015Plus) { $vcredist2015Plus.version } else { "1.0.0.0" }
 
-# Create packages directory
-New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
+# Create NSIS script
+Write-Host "`n📝 Creating NSIS installer script..." -ForegroundColor Cyan
 
-# Embedded packages (Base64 encoded)
-$embeddedPackages = ##EMBEDDED_PACKAGES##
+$nsisScript = Join-Path $OutputDir "installer.nsi"
 
-# Extract packages
-$extractionFailed = $false
-foreach ($pkg in $embeddedPackages.GetEnumerator()) {
-    $fileName = $pkg.Key
-    $base64Data = $pkg.Value
-    $outputPath = Join-Path $packageDir $fileName
-    
-    try {
-        $bytes = [Convert]::FromBase64String($base64Data)
-        [System.IO.File]::WriteAllBytes($outputPath, $bytes)
-        Write-Host "  ✔ Extracted: $fileName" -ForegroundColor Green
-    } catch {
-        Write-Warning "  ⚠ Failed to extract: $fileName - $($_.Exception.Message)"
-        $extractionFailed = $true
-    }
-}
+$nsisContent = @"
+; VCRedist AIO Offline Installer
+; Generated by build-nsis.ps1
 
-if ($extractionFailed) {
-    Write-Error "❌ Package extraction failed. Installation cannot continue."
-    exit 1
-}
+!define PRODUCT_NAME "VCRedist AIO Offline Installer"
+!define PRODUCT_VERSION "$productVersion"
+!define PRODUCT_PUBLISHER "VCRedist AIO"
+!define PRODUCT_WEB_SITE "https://github.com/michalokulski/vcredist-aio"
 
-Write-Host "✔ Extraction complete`n" -ForegroundColor Green
+; Compression
+SetCompressor /SOLID lzma
+SetCompressorDictSize 64
 
-# Override default paths for embedded installation
-$PackageDir = $packageDir
-$LogDir = $logDir
+; Modern UI
+!include "MUI2.nsh"
+!include "LogicLib.nsh"
 
-##INSTALL_ENGINE##
+; Request admin privileges
+RequestExecutionLevel admin
 
-# End of installer
-'@
+; Installer settings
+Name "`${PRODUCT_NAME}"
+OutFile "VC_Redist_AIO_Offline.exe"
+InstallDir "`$TEMP\VCRedist_AIO_Install"
+ShowInstDetails show
 
-# Replace placeholders with actual content
-$finalInstaller = $wrapperTemplate.Replace('##EMBEDDED_PACKAGES##', $embeddedPackagesCode)
-$finalInstaller = $finalInstaller.Replace('##INSTALL_ENGINE##', $installScriptTemplate)
+; Modern UI Configuration
+!define MUI_ABORTWARNING
+!define MUI_ICON "`${NSISDIR}\Contrib\Graphics\Icons\modern-install.ico"
+!define MUI_HEADERIMAGE
+!define MUI_HEADERIMAGE_BITMAP "`${NSISDIR}\Contrib\Graphics\Header\nsis.bmp"
+!define MUI_WELCOMEFINISHPAGE_BITMAP "`${NSISDIR}\Contrib\Graphics\Wizard\nsis.bmp"
 
-$finalInstaller | Out-File $scriptPath -Encoding UTF8 -Force
-Write-Host "✔ Self-extracting installer created" -ForegroundColor Green
+; Pages
+!insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_PAGE_FINISH
 
-# Ensure ps2exe module is available
-Write-Host "`n📦 Verifying ps2exe environment..." -ForegroundColor Cyan
+; Language
+!insertmacro MUI_LANGUAGE "English"
 
-$ps2exeCheck = pwsh -Command "
-    try {
-        if (-not (Get-Module -ListAvailable -Name ps2exe)) {
-            Write-Host 'Installing ps2exe module...'
-            Install-Module -Name ps2exe -Force -Scope CurrentUser -AllowClobber -ErrorAction Stop
-        }
-        Import-Module ps2exe -ErrorAction Stop
-        
-        # Verify version (ps2exe 1.0.13+ recommended)
-        `$version = (Get-Module ps2exe).Version
-        Write-Host \"ps2exe version: `$version\"
-        
-        if (`$version -lt [version]'1.0.13') {
-            Write-Warning 'Older ps2exe version detected. Consider updating: Update-Module ps2exe'
-        }
-        
-        Write-Host 'ps2exe ready'
-        exit 0
-    } catch {
-        Write-Error \`"ps2exe setup failed: `$_\`"
-        exit 1
-    }
-"
+; Version Information
+VIProductVersion "$productVersion"
+VIAddVersionKey "ProductName" "`${PRODUCT_NAME}"
+VIAddVersionKey "CompanyName" "`${PRODUCT_PUBLISHER}"
+VIAddVersionKey "FileDescription" "Offline installer for Microsoft Visual C++ Redistributables"
+VIAddVersionKey "FileVersion" "$productVersion"
+VIAddVersionKey "ProductVersion" "$productVersion"
+VIAddVersionKey "LegalCopyright" "(c) 2025 VCRedist AIO"
 
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "❌ Failed to initialize ps2exe. Aborting build."
-    exit 1
-}
+; Installer Section
+Section "MainSection" SEC01
+  SetOutPath "`$INSTDIR"
+  
+  DetailPrint "Extracting installation files..."
+  
+  ; Extract installer script
+  File "install.ps1"
+  
+  ; Create packages directory
+  CreateDirectory "`$INSTDIR\packages"
+  SetOutPath "`$INSTDIR\packages"
+  
+  ; Extract all packages
+$fileList
+  
+  DetailPrint "Running PowerShell installation script..."
+  SetOutPath "`$INSTDIR"
+  
+  ; Run PowerShell installer with proper error handling
+  nsExec::ExecToLog 'powershell.exe -ExecutionPolicy Bypass -NoProfile -File "`$INSTDIR\install.ps1" -PackageDir "`$INSTDIR\packages" -LogDir "`$TEMP"'
+  Pop `$0
+  
+  ; Check exit code
+  DetailPrint "Installation exit code: `$0"
+  
+  `${If} `$0 == 0
+    DetailPrint "Installation completed successfully"
+  `${ElseIf} `$0 == 1
+    DetailPrint "Installation completed with warnings"
+  `${Else}
+    DetailPrint "Installation exited with code: `$0"
+  `${EndIf}
+  
+  ; Cleanup
+  DetailPrint "Cleaning up temporary files..."
+  SetOutPath "`$TEMP"
+  RMDir /r "`$INSTDIR"
+  
+SectionEnd
 
-# Convert PowerShell script to EXE
-Write-Host "`n🔨 Converting installer.ps1 → EXE using ps2exe..." -ForegroundColor Cyan
-
-$cfg = Get-Content $PSEXEPath -Raw | ConvertFrom-Json
-$inputFile = $scriptPath
-$outputFile = Join-Path $OutputDir "VC_Redist_AIO_Offline.exe"
-$requireAdmin = $cfg.requireAdmin
-$noConsole = $cfg.noConsole
-
-# Build ps2exe command with proper parameter mapping
-$ps2exeArgs = @(
-    "-InputFile `"$inputFile`""
-    "-OutputFile `"$outputFile`""
-    "-RequireAdmin:`$$requireAdmin"
-)
-
-# Only add NoConsole if it's set to true
-if ($noConsole) {
-    $ps2exeArgs += "-NoConsole"
-}
-
-$ps2exeCmd = @"
-Import-Module ps2exe -ErrorAction Stop
-Invoke-ps2exe $($ps2exeArgs -join ' ') -ErrorAction Stop
+; Uninstaller (required by NSIS but not used)
+Section "Uninstall"
+  ; Nothing to uninstall - this is a redistributable installer
+SectionEnd
 "@
 
-$ps2exeResult = pwsh -Command $ps2exeCmd
+$nsisContent | Out-File $nsisScript -Encoding ASCII -Force
+Write-Host "✔ NSIS script created" -ForegroundColor Green
 
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "❌ ps2exe conversion failed: $ps2exeResult"
+# Compile NSIS installer
+Write-Host "`n🔨 Compiling NSIS installer..." -ForegroundColor Cyan
+
+$nsisArgs = @(
+    "/V4"
+    "`"$nsisScript`""
+)
+
+$process = Start-Process -FilePath $nsisPath -ArgumentList $nsisArgs -Wait -PassThru -NoNewWindow
+
+if ($process.ExitCode -ne 0) {
+    Write-Error "❌ NSIS compilation failed with exit code: $($process.ExitCode)"
     exit 1
 }
 
-if (-not (Test-Path $outputFile)) {
-    Write-Error "❌ Output EXE not created: $outputFile"
+$outputExe = Join-Path $OutputDir "VC_Redist_AIO_Offline.exe"
+if (-not (Test-Path $outputExe)) {
+    Write-Error "❌ Output EXE not created: $outputExe"
     exit 1
 }
 
-Write-Host "✔ EXE created: $outputFile"
+Write-Host "✔ NSIS installer created: $outputExe" -ForegroundColor Green
 
-# Create SHA256 checksums
+# Compute checksums
 Write-Host "`n🔐 Computing SHA256 checksums..." -ForegroundColor Cyan
 
 $checksumFile = Join-Path $OutputDir "SHA256.txt"
-$checksumContent = ""
-
-if (Test-Path $outputFile) {
-    $hash = Get-FileHash $outputFile -Algorithm SHA256
-    $checksumContent += "$($hash.Hash)  $(Split-Path $outputFile -Leaf)`n"
-    Write-Host "  EXE: $($hash.Hash)" -ForegroundColor DarkGray
-}
-
+$hash = Get-FileHash $outputExe -Algorithm SHA256
+$checksumContent = "$($hash.Hash)  $(Split-Path $outputExe -Leaf)"
 $checksumContent | Out-File $checksumFile -Encoding ASCII -Force
-Write-Host "✔ Checksums saved to: SHA256.txt"
+Write-Host "  EXE: $($hash.Hash)" -ForegroundColor DarkGray
 
-# Cleanup downloads directory - moved to the end after EXE creation
-Write-Host "`n🧹 Cleaning up temporary downloads..." -ForegroundColor Cyan
+# Cleanup
+Write-Host "`n🧹 Cleaning up temporary files..." -ForegroundColor Cyan
 if (Test-Path $downloadDir) {
     Remove-Item -Path $downloadDir -Recurse -Force -ErrorAction SilentlyContinue
-    Write-Host "✔ Cleanup complete"
 }
+if (Test-Path $nsisScript) {
+    Remove-Item -Path $nsisScript -Force -ErrorAction SilentlyContinue
+}
+Write-Host "✔ Cleanup complete"
 
 Write-Host "`n✅ Build completed successfully!" -ForegroundColor Green
-Write-Host "📦 Output: $outputFile"
+Write-Host "📦 Output: $outputExe"
 Write-Host "📊 Total packages: $($downloadedFiles.Count)"
+$exeSize = [math]::Round((Get-Item $outputExe).Length / 1MB, 2)
+Write-Host "📏 Installer size: $exeSize MB"
 
 exit 0

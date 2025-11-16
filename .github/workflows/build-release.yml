@@ -17,16 +17,85 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Build installer
+      # Install NSIS
+      - name: Install NSIS
         run: |
-          pwsh -File automation/build.ps1 `
+          choco install nsis -y
+          Write-Host "✔ NSIS installed"
+
+      - name: Build NSIS installer
+        run: |
+          pwsh -File automation/build-nsis.ps1 `
             -PackagesFile packages.json `
-            -OutputDir dist `
-            -PSEXEPath powershell-to-exe.json
+            -OutputDir dist
+
+      - name: Create ZIP package (standalone script)
+        run: |
+          # Clean up any existing release-package directory
+          if (Test-Path 'release-package') {
+            Remove-Item -Path 'release-package' -Recurse -Force
+          }
+          
+          # Create clean release structure
+          $releaseDir = 'release-package'
+          $packagesDir = Join-Path $releaseDir 'packages'
+          
+          New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
+          New-Item -ItemType Directory -Path $packagesDir -Force | Out-Null
+          
+          # Copy packages
+          Copy-Item -Path 'dist/packages/*' -Destination $packagesDir -Force
+          
+          # Copy standalone installer script
+          Copy-Item -Path 'automation/install.ps1' -Destination $releaseDir -Force
+          
+          # Create README for ZIP users
+          $readmeContent = @"
+          # VCRedist AIO Offline Installer
+          
+          ## Installation Instructions
+          
+          1. Extract this archive to a folder
+          2. Right-click ``install.ps1`` → Run with PowerShell (as Administrator)
+          3. Or run from command line:
+             ``````powershell
+             powershell -ExecutionPolicy Bypass -File install.ps1
+             ``````
+          
+          ## Optional Parameters
+          
+          - Silent mode: ``install.ps1 -Silent``
+          - Skip validation: ``install.ps1 -SkipValidation``
+          
+          ## Log Files
+          
+          Installation logs are saved to: ``vcredist-install-YYYYMMDD-HHMMSS.log``
+          
+          ## What's Inside
+          
+          This package contains official Microsoft Visual C++ Redistributables:
+          - Visual C++ 2005 (x86/x64)
+          - Visual C++ 2008 (x86/x64)
+          - Visual C++ 2010 (x86/x64)
+          - Visual C++ 2012 (x86/x64)
+          - Visual C++ 2013 (x86/x64)
+          - Visual C++ 2015-2022 (x86/x64)
+          - Visual Studio Tools for Office Runtime (VSTOR)
+          
+          All packages are downloaded from official Microsoft sources via Winget manifests.
+          "@
+          
+          $readmeContent | Out-File (Join-Path $releaseDir "README.txt") -Encoding UTF8
+          
+          # Create ZIP
+          New-Item -ItemType Directory -Path artifact -Force | Out-Null
+          Compress-Archive -Path "$releaseDir/*" -DestinationPath 'artifact/vc_redist_aio_offline.zip' -CompressionLevel Optimal -Force
+          
+          Write-Host "✔ ZIP package created"
 
       - name: Validate build artifacts
         run: |
-          $files = @('dist/VC_Redist_AIO_Offline.exe', 'dist/SHA256.txt')
+          $files = @('dist/VC_Redist_AIO_Offline.exe', 'dist/SHA256.txt', 'artifact/vc_redist_aio_offline.zip')
           foreach ($f in $files) {
             if (-not (Test-Path $f)) {
               Write-Error "Required artifact missing: $f"
@@ -51,35 +120,6 @@ jobs:
             exit 1
           }
 
-      - name: Create ZIP archive
-        run: |
-          # Clean up any existing release-package directory
-          if (Test-Path 'release-package') {
-            Remove-Item -Path 'release-package' -Recurse -Force
-          }
-          
-          # Create clean release structure
-          $releaseDir = 'release-package'
-          $packagesDir = Join-Path $releaseDir 'packages'
-          
-          New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
-          New-Item -ItemType Directory -Path $packagesDir -Force | Out-Null
-          
-          # Copy packages
-          Copy-Item -Path 'dist/packages/*' -Destination $packagesDir -Force
-          
-          # Copy installer script
-          Copy-Item -Path 'dist/installer.ps1' -Destination $releaseDir -Force
-          
-          # Copy SHA256.txt
-          Copy-Item -Path 'dist/SHA256.txt' -Destination $releaseDir -Force
-          
-          # Create ZIP
-          New-Item -ItemType Directory -Path artifact -Force | Out-Null
-          Compress-Archive -Path "$releaseDir/*" -DestinationPath 'artifact/vc_redist_aio_offline.zip' -Force
-          
-          Write-Host "✔ ZIP created with proper structure"
-
       - name: Compute SHA256 for all assets
         id: compute-sha
         run: |
@@ -92,6 +132,10 @@ jobs:
           Write-Host "EXE SHA256: $exeSha"
           Write-Host "ZIP SHA256: $zipSha"
           
+          # Get file sizes
+          $exeSize = [math]::Round((Get-Item $exeFile).Length / 1MB, 2)
+          $zipSize = [math]::Round((Get-Item $zipFile).Length / 1MB, 2)
+          
           # Create combined checksum file
           $checksumContent = @"
           $exeSha  VC_Redist_AIO_Offline.exe
@@ -103,6 +147,8 @@ jobs:
           # Output for release notes
           Add-Content -Path $env:GITHUB_OUTPUT -Value "exe_sha=$exeSha"
           Add-Content -Path $env:GITHUB_OUTPUT -Value "zip_sha=$zipSha"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "exe_size=$exeSize"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "zip_size=$zipSize"
 
       - name: Generate release notes
         id: release-notes
@@ -112,11 +158,27 @@ jobs:
           $notes = @"
           # VCRedist AIO Offline Installer
           
-          **SHA256 Checksums:**
-          ``````
-          ${{ steps.compute-sha.outputs.exe_sha }}  VC_Redist_AIO_Offline.exe
-          ${{ steps.compute-sha.outputs.zip_sha }}  vc_redist_aio_offline.zip
-          ``````
+          ## Download Options
+          
+          | File | Size | SHA256 | Description |
+          |------|------|--------|-------------|
+          | **VC_Redist_AIO_Offline.exe** | ${{ steps.compute-sha.outputs.exe_size }} MB | ``${{ steps.compute-sha.outputs.exe_sha }}`` | **Recommended** - NSIS installer, one-click installation |
+          | **vc_redist_aio_offline.zip** | ${{ steps.compute-sha.outputs.zip_size }} MB | ``${{ steps.compute-sha.outputs.zip_sha }}`` | PowerShell script + packages for manual control |
+          
+          ## Installation Instructions
+          
+          ### Option 1: NSIS Installer (Recommended)
+          1. Download ``VC_Redist_AIO_Offline.exe``
+          2. Run as Administrator
+          3. The installer will automatically extract and install all packages
+          4. Check log file in ``%TEMP%``: ``vcredist-install-YYYYMMDD-HHMMSS.log``
+          
+          ### Option 2: PowerShell Script (Advanced)
+          1. Download and extract ``vc_redist_aio_offline.zip``
+          2. Right-click ``install.ps1`` → Run with PowerShell (as Administrator)
+          3. Optional flags:
+             - ``-Silent``: Suppress console output
+             - ``-SkipValidation``: Skip pre-installation checks (not recommended)
           
           ## Included Packages
           
@@ -133,18 +195,6 @@ jobs:
           $notes += @"
           
           
-          ## Installation
-          
-          ### Option 1: EXE (Recommended)
-          1. Download ``VC_Redist_AIO_Offline.exe``
-          2. Run as Administrator
-          3. Check log file: ``vcredist-install-YYYYMMDD-HHMMSS.log``
-          
-          ### Option 2: PowerShell Script
-          1. Download and extract ``vc_redist_aio_offline.zip``
-          2. Run as Administrator: ``.\installer.ps1``
-          3. Optional flags: ``-Silent``, ``-SkipValidation``
-          
           ## What's Inside
           
           - **Visual C++ 2005** (x86/x64)
@@ -155,12 +205,41 @@ jobs:
           - **Visual C++ 2015-2022** (x86/x64) - Unified runtime
           - **Visual Studio Tools for Office Runtime (VSTOR)**
           
-          All packages are official Microsoft redistributables downloaded from Winget manifests.
+          All packages are **official Microsoft redistributables** downloaded from Winget manifests.
+          
+          ## Why Choose This Over Other Solutions?
+          
+          ✅ **Automated Updates** - GitHub Actions check Winget daily for new versions  
+          ✅ **Verifiable Sources** - All downloads from official Microsoft URLs  
+          ✅ **Transparent** - Full source code on GitHub  
+          ✅ **Modern Focus** - Optimized for Windows 10/11  
+          ✅ **Multiple Formats** - Choose NSIS installer or PowerShell script  
+          ✅ **No AV False Positives** - Uses industry-standard NSIS installer  
+          
+          ## Advantages Over ps2exe
+          
+          Previous versions used ps2exe for EXE generation, which often triggered false positives from antivirus software. This release uses **NSIS (Nullsoft Scriptable Install System)**, the same technology used by professional applications like:
+          - Mozilla Firefox
+          - VLC Media Player
+          - 7-Zip
+          - And thousands of other legitimate applications
+          
+          **Benefits:**
+          - ✅ Significantly lower false positive rate
+          - ✅ Trusted by Windows Defender and major AV vendors
+          - ✅ Professional installer UI
+          - ✅ Better compression (smaller file size)
+          - ✅ Industry-standard packaging
+          
+          ## Log Files
+          
+          Installation logs: ``vcredist-install-YYYYMMDD-HHMMSS.log`` (saved to ``%TEMP%``)
+          
+          Check the log file for detailed installation results and any errors.
           "@
           
-          # Save to file for use in release
+          # Save to file
           $notes | Out-File 'release-notes.md' -Encoding UTF8 -Force
-          
           Write-Host "Release notes generated"
 
       - name: Create Release

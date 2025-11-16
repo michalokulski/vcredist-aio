@@ -1,12 +1,14 @@
-# filepath: .gitignore
+// filepath: .gitignore
 # Ignore build output
 dist/*.exe
 dist/*.zip
 dist/*.msi
+dist/*.nsi
 dist/SHA256.txt
 dist/downloads/
 dist/packages/
 dist/installer.ps1
+dist/install.ps1
 
 build/*.exe
 build/*.zip
