@@ -5,6 +5,7 @@ dist/*.msi
 dist/SHA256.txt
 dist/downloads/
 dist/packages/
+dist/installer.ps1
 
 build/*.exe
 build/*.zip

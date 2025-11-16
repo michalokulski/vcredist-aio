@@ -47,6 +47,10 @@
     {
       "id": "Microsoft.VCRedist.2015Plus.x64",
       "version": ""
+    },
+    {
+      "id": "Microsoft.VSTOR",
+      "version": ""
     }
   ]
 }

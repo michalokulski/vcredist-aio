@@ -52,18 +52,25 @@ function Get-LatestVersionFromManifestPath {
 
     try {
         $parts = $PackageId -split '\.'
-        if ($parts.Length -lt 3) { return $null }
+        if ($parts.Length -lt 2) { return $null }
 
         $vendor = $parts[0]
         $product = $parts[1]
-        $versionPart = $parts[2]
-        $arch = if ($PackageId -match "x64") { "x64" } else { "x86" }
-
-        # Determine folder structure
-        $folderYear = if ($versionPart -eq "2015Plus") { "2015+" } else { $versionPart }
-
-        # Build path to architecture folder (where version subdirectories live)
-        $archPath = "manifests/m/$vendor/$product/$folderYear/$arch"
+        
+        # Determine if this is an architecture-specific package (VCRedist)
+        $isArchSpecific = $PackageId -match "VCRedist" -and $parts.Length -ge 3
+        
+        if ($isArchSpecific) {
+            # VCRedist packages: manifests/m/Microsoft/VCRedist/2008/x64/
+            $versionPart = $parts[2]
+            $arch = if ($PackageId -match "x64") { "x64" } else { "x86" }
+            $folderYear = if ($versionPart -eq "2015Plus") { "2015+" } else { $versionPart }
+            $archPath = "manifests/m/$vendor/$product/$folderYear/$arch"
+        } else {
+            # Other packages: manifests/m/Microsoft/VSTOR/ or manifests/m/Microsoft/DirectX/
+            $archPath = "manifests/m/$vendor/$product"
+        }
+        
         $archUrl = "https://api.github.com/repos/microsoft/winget-pkgs/contents/$archPath"
 
         Write-Host "  Querying: $archPath" -ForegroundColor DarkGray
@@ -96,7 +103,6 @@ function Get-LatestVersionFromManifestPath {
             return $null 
         }
 
-        # Sort by semantic version (descending)
         # Sort versions: highest first
         $parsed = @()
         foreach ($v in $versions) {
@@ -104,15 +110,14 @@ function Get-LatestVersionFromManifestPath {
                 $ver = [version]$v
                 $parsed += @{name=$v; ver=$ver}
             } catch {
-                # Fallback: treat as string if not semver, compare lexicographically
+                # Fallback: treat as string if not semver
                 $parsed += @{name=$v; ver=[version]"0.0.0.0"}
             }
         }
 
-        # Sort versions: highest first, then safely extract the top result
+        # Sort and extract top result
         $sorted = @($parsed | Sort-Object -Property @{Expression={$_.ver}; Descending=$true})
         
-        # Get the first non-null element (Sort-Object sometimes adds null entries with single-item arrays)
         $chosenVersion = $null
         foreach ($item in $sorted) {
             if ($item -and $item.name) {
@@ -128,14 +133,7 @@ function Get-LatestVersionFromManifestPath {
 
         Write-Host "  Latest version: $chosenVersion" -ForegroundColor DarkGray
         return $chosenVersion
-
-        if ([string]::IsNullOrWhiteSpace($chosenVersion)) { 
-            Write-Host "  ⚠ Failed to extract version from sorted results" -ForegroundColor DarkGray
-            return $null 
-        }
-
-        Write-Host "  Latest version: $chosenVersion" -ForegroundColor DarkGray
-        return $chosenVersion
+        
     } catch {
         Write-Host "  ❌ Error: $($_.Exception.Message)" -ForegroundColor Red
         Write-Host "  StackTrace: $($_.ScriptStackTrace)" -ForegroundColor DarkRed
