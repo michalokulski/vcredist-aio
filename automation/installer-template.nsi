@@ -179,10 +179,12 @@ Section "MainSection" SEC01
   ; Build PowerShell command line arguments
   StrCpy $1 "-PackageDir \`"$INSTDIR\packages\`""
   
-  ; Add log file parameter if specified
+  ; Add log directory parameter if specified
   ${If} $LogFile != ""
+    ; Always treat as directory (user should pass directory path)
     StrCpy $1 "$1 -LogDir \`"$LogFile\`""
   ${Else}
+    ; Default to TEMP directory
     StrCpy $1 "$1 -LogDir \`"$TEMP\`""
   ${EndIf}
   
@@ -250,7 +252,7 @@ Section "Uninstall"
     DetailPrint "Running uninstall script..."
     
     ; Build uninstall arguments - ALWAYS include -Force for NSIS context
-    StrCpy $1 "-Force"
+    StrCpy $1 "-Force -LogDir \`"$INSTDIR\`""
     ${If} ${Silent}
       StrCpy $1 "$1 -Silent"
     ${EndIf}
@@ -276,6 +278,17 @@ Section "Uninstall"
   Delete "$INSTDIR\uninstall.exe"
   Delete "$INSTDIR\uninstall.ps1"
   Delete "$INSTDIR\install.ps1"
+  
+  ; Remove log files (with user confirmation in non-silent mode)
+  ${If} ${FileExists} "$INSTDIR\vcredist-*.log"
+    ${IfNot} ${Silent}
+      MessageBox MB_YESNO "Remove installation and uninstallation log files?" IDYES +2
+      Goto SkipLogRemoval
+    ${EndIf}
+    Delete "$INSTDIR\vcredist-install-*.log"
+    Delete "$INSTDIR\vcredist-uninstall-*.log"
+    SkipLogRemoval:
+  ${EndIf}
   
   ; Remove packages directory (only if empty or user confirms)
   ${If} ${FileExists} "$INSTDIR\packages\*.*"
