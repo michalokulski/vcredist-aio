@@ -368,60 +368,47 @@ $nsisArgs = @(
 Write-Host "  NSIS command: $nsisPath $($nsisArgs -join ' ')" -ForegroundColor DarkGray
 Write-Host "  NSIS log: $nsisLogFile" -ForegroundColor DarkGray
 
-# Run NSIS with output capture
-$processInfo = New-Object System.Diagnostics.ProcessStartInfo
-$processInfo.FileName = $nsisPath
-$processInfo.Arguments = $nsisArgs -join ' '
-$processInfo.RedirectStandardOutput = $true
-$processInfo.RedirectStandardError = $true
-$processInfo.UseShellExecute = $false
-$processInfo.CreateNoWindow = $true
-
-$process = New-Object System.Diagnostics.Process
-$process.StartInfo = $processInfo
-
-$outputBuilder = New-Object System.Text.StringBuilder
-$errorBuilder = New-Object System.Text.StringBuilder
-
-$outputHandler = {
-    if (-not [string]::IsNullOrEmpty($EventArgs.Data)) {
-        [void]$outputBuilder.AppendLine($EventArgs.Data)
-        Write-Host "  NSIS: $($EventArgs.Data)" -ForegroundColor DarkGray
+# Run NSIS with simple output redirection (avoiding runspace issues)
+try {
+    $output = & $nsisPath $nsisArgs 2>&1
+    $exitCode = $LASTEXITCODE
+    
+    # Save output to log file
+    $logContent = "NSIS Build Log - $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`n"
+    $logContent += "=" * 80 + "`n"
+    $logContent += "Script: $nsisScript`n"
+    $logContent += "Output File: VC_Redist_AIO_Offline.exe`n"
+    $logContent += "Exit Code: $exitCode`n"
+    $logContent += "`nOutput:`n"
+    $logContent += $output -join "`n"
+    
+    $logContent | Out-File $nsisLogFile -Encoding UTF8 -Force
+    
+    # Display output with color coding
+    if ($DebugMode) {
+        $output | ForEach-Object {
+            $line = $_.ToString()
+            if ($line -match "error|fail|warning") {
+                Write-Host "  NSIS: $line" -ForegroundColor Yellow
+            } else {
+                Write-Host "  NSIS: $line" -ForegroundColor DarkGray
+            }
+        }
     }
-}
-
-$errorHandler = {
-    if (-not [string]::IsNullOrEmpty($EventArgs.Data)) {
-        [void]$errorBuilder.AppendLine($EventArgs.Data)
-        Write-Host "  NSIS ERROR: $($EventArgs.Data)" -ForegroundColor Red
+    
+    # Check exit code
+    if ($exitCode -ne 0) {
+        Write-Error "❌ NSIS compilation failed with exit code: $exitCode"
+        Write-Host "`n📋 NSIS build log saved to: $nsisLogFile" -ForegroundColor Yellow
+        Write-Host "`nLast 20 lines of output:" -ForegroundColor Yellow
+        $output | Select-Object -Last 20 | ForEach-Object { Write-Host "  $_" }
+        exit 1
     }
-}
-
-$process.add_OutputDataReceived($outputHandler)
-$process.add_ErrorDataReceived($errorHandler)
-
-$process.Start() | Out-Null
-$process.BeginOutputReadLine()
-$process.BeginErrorReadLine()
-$process.WaitForExit()
-
-$exitCode = $process.ExitCode
-
-# Save complete log
-$logContent = "NSIS Build Log - $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`n"
-$logContent += "=" * 80 + "`n"
-$logContent += "Script: $nsisScript`n"
-$logContent += "Output: $outputExe`n"
-$logContent += "Exit Code: $exitCode`n"
-$logContent += "`nSTDOUT:`n" + $outputBuilder.ToString()
-$logContent += "`nSTDERR:`n" + $errorBuilder.ToString()
-$logContent | Out-File $nsisLogFile -Encoding UTF8 -Force
-
-if ($exitCode -ne 0) {
-    Write-Error "❌ NSIS compilation failed with exit code: $exitCode"
-    Write-Host "`n📋 NSIS build log saved to: $nsisLogFile" -ForegroundColor Yellow
-    Write-Host "`nLast 20 lines of output:" -ForegroundColor Yellow
-    $outputBuilder.ToString() -split "`n" | Select-Object -Last 20 | ForEach-Object { Write-Host "  $_" }
+    
+    Write-Host "✔ NSIS compilation successful" -ForegroundColor Green
+    
+} catch {
+    Write-Error "❌ NSIS execution failed: $($_.Exception.Message)"
     exit 1
 }
 
