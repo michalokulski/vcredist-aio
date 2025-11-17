@@ -332,8 +332,7 @@ $nsisLines += @(
     "  SetOutPath `"`$INSTDIR`"",
     "  ",
     "  ; Run PowerShell installer with proper error handling",
-    "  nsExec::ExecToLog 'powershell.exe -ExecutionPolicy Bypass -NoProfile -File `"`$INSTDIR\install.ps1`" -PackageDir `"`$INSTDIR\packages`" -LogDir `"`$TEMP`"'",
-    "  Pop `$0",
+    "  ExecWait 'powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File `"`$INSTDIR\install.ps1`" -PackageDir `"`$INSTDIR\packages`" -LogDir `"`$TEMP`"' `$0",
     "  ",
     "  ; Check exit code",
     "  DetailPrint `"Installation exit code: `$0`"",
@@ -372,8 +371,8 @@ Write-Host "`n🔨 Compiling NSIS installer..." -ForegroundColor Cyan
 $nsisLogFile = Join-Path $OutputDir "nsis-build.log"
 
 $nsisArgs = @(
-    "/V4"  # Verbosity level 4 (highest)
-    "`"$nsisScript`""
+    "/V4",  # Verbosity level 4 (highest)
+    $nsisScript
 )
 
 Write-Host "  NSIS command: $nsisPath $($nsisArgs -join ' ')" -ForegroundColor DarkGray
