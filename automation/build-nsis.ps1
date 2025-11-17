@@ -328,7 +328,7 @@ $nsisLines += $fileList
 # Add rest of installer section
 $nsisLines += @(
     "  ",
-    "  DetailPrint `"Running PowerShell installation script..."`",
+    "  DetailPrint `"Running PowerShell installation script...`"",
     "  SetOutPath `"`$INSTDIR`"",
     "  ",
     "  ; Detect if installer is running in silent mode",
