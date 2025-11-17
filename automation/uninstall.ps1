@@ -178,8 +178,8 @@ function Get-InstalledVCRedist {
     $uniquePackages = $vcRedistPackages.Count
     $duplicatesRemoved = $totalRegistryEntries - $uniquePackages
     
-    # Sort by name and version
-    $vcRedistPackages = $vcRedistPackages | Sort-Object DisplayName, DisplayVersion
+    # Sort by name and version (ensure we keep array even with 1 item)
+    $vcRedistPackages = @($vcRedistPackages | Sort-Object DisplayName, DisplayVersion)
     
     if ($duplicatesRemoved -gt 0) {
         Write-Log "Found $uniquePackages unique package(s) ($totalRegistryEntries registry entries, $duplicatesRemoved duplicates removed)" -Level SUCCESS
@@ -187,7 +187,8 @@ function Get-InstalledVCRedist {
         Write-Log "Found $uniquePackages Visual C++ package(s)" -Level SUCCESS
     }
     
-    return $vcRedistPackages
+    # Force return as array to prevent single-item unwrapping
+    return ,$vcRedistPackages
 }
 
 # ============================================================================
