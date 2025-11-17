@@ -197,6 +197,59 @@ Comment out cleanup section:
 # }
 ```
 
+## Silent Mode Testing
+
+### Test Silent Installation
+
+```powershell
+# Test NSIS silent mode
+dist/VC_Redist_AIO_Offline.exe /S
+
+# Check exit code
+$exitCode = $LASTEXITCODE
+Write-Host "Exit code: $exitCode"
+
+# Check log file
+$logFile = Get-ChildItem $env:TEMP -Filter "vcredist-install-*.log" | 
+    Sort-Object LastWriteTime -Descending | 
+    Select-Object -First 1
+
+if ($logFile) {
+    Write-Host "Log file: $($logFile.FullName)"
+    Get-Content $logFile.FullName -Tail 20
+}
+```
+
+### Verify Silent Mode Behavior
+
+```powershell
+# Test that no console windows appear
+Start-Process -FilePath "dist/VC_Redist_AIO_Offline.exe" -ArgumentList "/S" -Wait
+
+# Should complete without any visible windows
+```
+
+### Silent Mode Troubleshooting
+
+If silent installation fails:
+
+1. **Check log file**: Silent mode still creates logs in `%TEMP%`
+   ```powershell
+   Get-ChildItem $env:TEMP -Filter "vcredist-install-*.log" | 
+       Sort-Object LastWriteTime -Descending | 
+       Select-Object -First 1 | 
+       Get-Content -Tail 50
+   ```
+
+2. **Test PowerShell script separately**:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File dist/install.ps1 -Silent
+   ```
+
+3. **Verify NSIS silent detection**:
+   - Check `dist/installer.nsi` for `\${If} \${Silent}` block
+   - Ensure `-Silent` flag is passed to PowerShell
+
 ## Testing Workflow
 
 ### 1. Test Individual Components

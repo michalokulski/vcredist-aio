@@ -69,6 +69,11 @@ Each release includes two formats:
 3. The installer will automatically extract and install all packages
 4. Check log file in `%TEMP%`: `vcredist-install-YYYYMMDD-HHMMSS.log`
 
+**Silent Installation:**
+```cmd
+VC_Redist_AIO_Offline.exe /S
+```
+
 ### Option 2: PowerShell Script (Advanced)
 
 1. Download and extract `vc_redist_aio_offline.zip`
@@ -76,7 +81,7 @@ Each release includes two formats:
 3. Optional command-line flags:
 
 ```powershell
-# Silent installation
+# Silent installation (no console output)
 .\install.ps1 -Silent
 
 # Skip pre-installation validation (not recommended)
@@ -84,6 +89,11 @@ Each release includes two formats:
 
 # Both flags
 .\install.ps1 -Silent -SkipValidation
+```
+
+**Silent Installation:**
+```powershell
+powershell -ExecutionPolicy Bypass -File install.ps1 -Silent
 ```
 
 ---

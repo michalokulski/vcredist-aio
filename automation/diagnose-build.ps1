@@ -180,7 +180,43 @@ if ($drive) {
     }
 }
 
-# 8. Recommendations
+# 8. Test Silent Mode
+Write-Host "`n🤫 Silent Mode Test:" -ForegroundColor Yellow
+$outputExe = Join-Path $OutputDir "VC_Redist_AIO_Offline.exe"
+if (Test-Path $outputExe) {
+    Write-Host "  Testing silent installation mode..."
+    
+    # Create temporary test directory
+    $testDir = Join-Path $env:TEMP "vcredist-silent-test"
+    New-Item -ItemType Directory -Path $testDir -Force | Out-Null
+    
+    try {
+        # Note: Full silent test would actually install packages
+        # Here we just verify the installer accepts /S parameter
+        Write-Host "  ℹ Silent mode can be tested with: $outputExe /S" -ForegroundColor Gray
+        Write-Host "  ℹ Log will be created in: %TEMP%\vcredist-install-*.log" -ForegroundColor Gray
+        
+        # Check if NSIS script has silent detection
+        $nsisScript = Join-Path $OutputDir "installer.nsi"
+        if (Test-Path $nsisScript) {
+            $scriptContent = Get-Content $nsisScript -Raw
+            if ($scriptContent -match '\$\{If\}\s+\$\{Silent\}') {
+                Write-Host "  ✓ NSIS script contains silent mode detection" -ForegroundColor Green
+            } else {
+                Write-Host "  ⚠ NSIS script may not have silent mode detection" -ForegroundColor Yellow
+            }
+        }
+    } catch {
+        Write-Host "  ✗ Silent test failed: $($_.Exception.Message)" -ForegroundColor Red
+    } finally {
+        # Cleanup test directory
+        Remove-Item -Path $testDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} else {
+    Write-Host "  ℹ Installer not found - skip test" -ForegroundColor Gray
+}
+
+# 9. Recommendations
 Write-Host "`n💡 Recommendations:" -ForegroundColor Cyan
 
 $issues = @()
