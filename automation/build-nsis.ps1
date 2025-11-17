@@ -235,9 +235,11 @@ if (-not (Test-Path $nsisPath)) {
 
 Write-Host "✔ NSIS found: $nsisPath" -ForegroundColor Green
 
-# Copy install.ps1 to output directory
+# Copy install.ps1 and uninstall.ps1 to output directory
 $installScriptPath = Join-Path $PSScriptRoot "install.ps1"
+$uninstallScriptPath = Join-Path $PSScriptRoot "uninstall.ps1"
 Copy-Item -Path $installScriptPath -Destination $OutputDir -Force
+Copy-Item -Path $uninstallScriptPath -Destination $OutputDir -Force
 
 # Generate file list for NSIS (use simple loop to avoid encoding issues)
 $fileListLines = @()
