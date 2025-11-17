@@ -1,4 +1,3 @@
-// filepath: .gitignore
 # Ignore build output
 dist/*.exe
 dist/*.zip

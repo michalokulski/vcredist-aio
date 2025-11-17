@@ -1,6 +1,11 @@
 ; VCRedist AIO Offline Installer
 ; Template for NSIS installer script
 
+; Require NSIS 3.0 or higher
+!ifndef NSIS_VERSION
+  !error "NSIS version too old - this script requires NSIS 3.0 or higher"
+!endif
+
 !define PRODUCT_NAME "VCRedist AIO Offline Installer"
 !define PRODUCT_VERSION "{{VERSION}}"
 !define PRODUCT_PUBLISHER "VCRedist AIO"
@@ -280,7 +285,10 @@ Section "Uninstall"
   Delete "$INSTDIR\install.ps1"
   
   ; Remove log files (with user confirmation in non-silent mode)
-  ${If} ${FileExists} "$INSTDIR\vcredist-*.log"
+  ; Use FindFirst to check if any log files exist (wildcards don't work with FileExists)
+  FindFirst $0 $1 "$INSTDIR\vcredist-*.log"
+  ${If} $1 != ""
+    FindClose $0
     ${IfNot} ${Silent}
       MessageBox MB_YESNO "Remove installation and uninstallation log files?" IDYES +2
       Goto SkipLogRemoval

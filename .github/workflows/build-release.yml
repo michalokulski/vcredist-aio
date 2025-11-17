@@ -20,8 +20,24 @@ jobs:
       # Install NSIS
       - name: Install NSIS
         run: |
-          choco install nsis -y
-          Write-Host "✔ NSIS installed"
+          try {
+            choco install nsis -y --no-progress
+            if ($LASTEXITCODE -ne 0) {
+              throw "Chocolatey failed with exit code: $LASTEXITCODE"
+            }
+            
+            # Verify NSIS is accessible
+            $nsisPath = "C:\Program Files (x86)\NSIS\makensis.exe"
+            if (-not (Test-Path $nsisPath)) {
+              throw "NSIS executable not found at: $nsisPath"
+            }
+            
+            $version = & $nsisPath /VERSION
+            Write-Host "✔ NSIS installed successfully (version: $version)"
+          } catch {
+            Write-Error "Failed to install NSIS: $_"
+            exit 1
+          }
 
       - name: Build NSIS installer
         run: |
@@ -49,6 +65,22 @@ jobs:
           # Copy standalone installer script
           Copy-Item -Path 'automation/install.ps1' -Destination $releaseDir -Force
           Copy-Item -Path 'automation/uninstall.ps1' -Destination $releaseDir -Force
+          
+          # Verify required files were copied
+          $requiredFiles = @(
+            (Join-Path $packagesDir "*.exe"),
+            (Join-Path $releaseDir "install.ps1"),
+            (Join-Path $releaseDir "uninstall.ps1")
+          )
+          
+          foreach ($pattern in $requiredFiles) {
+            if (-not (Test-Path $pattern)) {
+              Write-Error "Required file(s) missing: $pattern"
+              exit 1
+            }
+          }
+          
+          Write-Host "✔ All required files verified"
           
           # Create README for ZIP users
           $readmeContent = @"

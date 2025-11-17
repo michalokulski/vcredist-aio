@@ -49,18 +49,33 @@ if ([string]::IsNullOrWhiteSpace($PackageDir)) {
 
 if ([string]::IsNullOrWhiteSpace($LogDir)) {
     $LogDir = $scriptDir
+} else {
+    # Validate custom log directory
+    if (-not (Test-Path $LogDir)) {
+        Write-Warning "Custom log directory does not exist: $LogDir"
+        Write-Warning "Attempting to create..."
+        try {
+            New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+            Write-Host "✔ Created log directory: $LogDir" -ForegroundColor Green
+        } catch {
+            Write-Warning "Failed to create log directory: $($_.Exception.Message)"
+            Write-Warning "Falling back to script directory: $scriptDir"
+            $LogDir = $scriptDir
+        }
+    }
 }
 
 # ============================================================================
 # LOGGING INFRASTRUCTURE
 # ============================================================================
 
-# Ensure log directory exists
+# Ensure log directory exists (final fallback)
 if (-not (Test-Path $LogDir)) {
     try {
         New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
     } catch {
-        # Fallback to temp directory if log dir creation fails
+        # Ultimate fallback to temp directory if all else fails
+        Write-Warning "Cannot create log directory, using TEMP: $env:TEMP"
         $LogDir = $env:TEMP
     }
 }
@@ -250,7 +265,8 @@ function Get-PackageManifest {
                     $filterYear = [int]$filter
                     if ($filterYear -ge 2015) {
                         # 2015-2022 all use the unified runtime (2015Plus)
-                        if ($fileName -match '2015Plus') {
+                        # Also match "2015+" variant if user types it
+                        if ($fileName -match '2015Plus|2015\+') {
                             $matched = $true
                             break
                         }
@@ -260,6 +276,12 @@ function Get-PackageManifest {
                             $matched = $true
                             break
                         }
+                    }
+                } elseif ($filter -match '2015\+') {
+                    # Handle explicit "2015+" filter variant
+                    if ($fileName -match '2015Plus|2015\+') {
+                        $matched = $true
+                        break
                     }
                 } elseif ($fileName -match $filter) {
                     # Direct string matching (e.g., "VSTOR", "x64", "x86")

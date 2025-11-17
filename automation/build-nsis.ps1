@@ -220,20 +220,39 @@ Write-Host "✔ Packages bundled ($($downloadedFiles.Count) files)"
 # Ensure NSIS is installed
 Write-Host "`n🔍 Checking for NSIS..." -ForegroundColor Cyan
 
-$nsisPath = "C:\Program Files (x86)\NSIS\makensis.exe"
-if (-not (Test-Path $nsisPath)) {
-    # Try 64-bit path as fallback
-    $nsisPath = "C:\Program Files\NSIS\makensis.exe"
+$nsisPath = $null
+$possiblePaths = @(
+    "C:\Program Files (x86)\NSIS\makensis.exe",
+    "C:\Program Files\NSIS\makensis.exe",
+    "${env:ProgramFiles(x86)}\NSIS\makensis.exe",
+    "$env:ProgramFiles\NSIS\makensis.exe"
+)
+
+foreach ($path in $possiblePaths) {
+    if (Test-Path $path) {
+        $nsisPath = $path
+        Write-Host "  Found NSIS at: $path" -ForegroundColor DarkGray
+        break
+    }
 }
 
-if (-not (Test-Path $nsisPath)) {
-    Write-Error "❌ NSIS not found at: C:\Program Files (x86)\NSIS\makensis.exe or C:\Program Files\NSIS\makensis.exe"
-    Write-Host "Please install NSIS from: https://nsis.sourceforge.io/Download" -ForegroundColor Yellow
+if (-not $nsisPath) {
+    Write-Error "❌ NSIS not found. Checked paths:"
+    foreach ($path in $possiblePaths) {
+        Write-Host "  - $path" -ForegroundColor DarkGray
+    }
+    Write-Host "`nPlease install NSIS from: https://nsis.sourceforge.io/Download" -ForegroundColor Yellow
     Write-Host "Or run: choco install nsis -y" -ForegroundColor Yellow
     exit 1
 }
 
-Write-Host "✔ NSIS found: $nsisPath" -ForegroundColor Green
+# Verify NSIS version
+try {
+    $nsisVersion = & $nsisPath /VERSION 2>$null
+    Write-Host "✔ NSIS found: $nsisPath (version: $nsisVersion)" -ForegroundColor Green
+} catch {
+    Write-Host "✔ NSIS found: $nsisPath" -ForegroundColor Green
+}
 
 # Copy install.ps1 and uninstall.ps1 to output directory
 $installScriptPath = Join-Path $PSScriptRoot "install.ps1"
@@ -260,6 +279,19 @@ if (-not (Test-Path $templatePath)) {
 
 # Read template
 $templateContent = Get-Content -Path $templatePath -Raw
+
+# Validate required placeholders exist
+if ($templateContent -notmatch '\{\{VERSION\}\}') {
+    Write-Error "❌ Template missing {{VERSION}} placeholder"
+    exit 1
+}
+
+if ($templateContent -notmatch '\{\{FILE_LIST\}\}') {
+    Write-Error "❌ Template missing {{FILE_LIST}} placeholder"
+    exit 1
+}
+
+Write-Host "  Template validation: OK" -ForegroundColor DarkGray
 
 # Build file list for packages
 $fileListLines = @()

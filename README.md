@@ -1,4 +1,3 @@
-// filepath: README.md
 # VC Redist AIO — Winget-based Offline Installer
 
 ![Latest Release](https://img.shields.io/github/v/release/michalokulski/vcredist-aio)
@@ -141,6 +140,22 @@ powershell -ExecutionPolicy Bypass -File install.ps1 -Silent
 
 The project includes a comprehensive uninstaller script that can remove all installed Visual C++ Redistributables.
 
+#### Uninstalling via NSIS (Windows Apps)
+
+If you installed using the NSIS installer:
+
+1. Open **Settings** → **Apps** → **Installed apps** (or **Control Panel** → **Programs and Features**)
+2. Search for "VCRedist AIO"
+3. Click **Uninstall**
+
+Or use command line:
+```cmd
+# Silent uninstall via NSIS
+"C:\Program Files\VCRedist_AIO\uninstall.exe" /S
+```
+
+#### Uninstalling via PowerShell Script
+
 **Important**: When running non-interactively (from scripts, NSIS, scheduled tasks), you **must** use the `-Force` parameter.
 
 ```powershell
@@ -157,7 +172,10 @@ The project includes a comprehensive uninstaller script that can remove all inst
 .\automation\uninstall.ps1 -WhatIf
 
 # Custom log directory
-.\automation\uninstall.ps1 -Force -LogDir "C:\Logs"
+.\automation\uninstall.ps1 -Force -Silent -LogDir "C:\Logs"
+
+# Combine parameters
+.\automation\uninstall.ps1 -Force -LogDir "C:\CustomPath\Logs"
 ```
 
 **Parameters:**
