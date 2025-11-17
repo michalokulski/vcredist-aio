@@ -31,7 +31,6 @@ This project takes a **different approach** from traditional repacks:
 - **Automated Downloads**: Downloads official Microsoft VC++ Redistributables using Winget manifests
 - **Offline Bundle**: Packages all installers into both NSIS EXE and ZIP formats
 - **NSIS Installer**: Professional installer using the same technology as Firefox, VLC, and 7-Zip
-- **No AV False Positives**: Unlike ps2exe, NSIS is trusted by all major antivirus software
 - **Advanced Parameters**: Extract-only mode, package filtering, custom logging, validation controls
 - **Uninstaller Integration**: Registers in Windows Apps & Features with full uninstaller support
 - **Comprehensive Uninstaller**: Dedicated script to remove all VC++ redistributables safely
@@ -52,7 +51,6 @@ Each release includes two formats:
    - One-click installation
    - Professional installer UI
    - Trusted by Windows Defender
-   - Smaller file size than ps2exe
 
 2. **vc_redist_aio_offline.zip**
    - PowerShell script + packages
@@ -268,29 +266,6 @@ Test the installer on a clean VM before deployment.
 
 ---
 
-## Why NSIS Over ps2exe?
-
-Previous versions of this project used **ps2exe** to create self-extracting executables. While functional, ps2exe has significant drawbacks:
-
-### Problems with ps2exe:
-- ❌ High false positive rate with antivirus software
-- ❌ Looks like malware to heuristic scanners
-- ❌ No digital signature support
-- ❌ Poor compression
-- ❌ Not trusted by enterprise environments
-
-### Benefits of NSIS:
-- ✅ Industry-standard installer (used by Firefox, VLC, 7-Zip)
-- ✅ Trusted by Windows Defender and all major AV vendors
-- ✅ Supports digital code signing
-- ✅ Professional installer UI
-- ✅ Excellent LZMA compression
-- ✅ Enterprise-friendly
-
-**Result**: The NSIS installer is typically **smaller** and has **zero false positives** compared to ps2exe.
-
----
-
 ## Automation (GitHub Actions)
 
 - **`check-updates.yml`**: Runs on schedule, checks Winget for package updates, updates `packages.json`, and creates update branches
@@ -369,13 +344,6 @@ This separation allows for:
 1. **Ensure NSIS is installed**: `choco install nsis -y`
 2. **Check GitHub token** for API rate limiting (set `GITHUB_TOKEN` environment variable)
 3. **Verify package versions** in `packages.json` are available in Winget
-
-### Antivirus False Positives
-
-If you're still using the old ps2exe-based build:
-- Switch to the NSIS build using `build-nsis.ps1`
-- NSIS installers have near-zero false positive rates
-- Consider code-signing for maximum trust
 
 ---
 

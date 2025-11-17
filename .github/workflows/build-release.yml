@@ -300,14 +300,6 @@ jobs:
           ✅ **Multiple Formats** - Choose NSIS installer or PowerShell script  
           ✅ **No AV False Positives** - Uses industry-standard NSIS installer  
           
-          ## Advantages Over ps2exe
-          
-          Previous versions used ps2exe for EXE generation, which often triggered false positives from antivirus software. This release uses **NSIS (Nullsoft Scriptable Install System)**, the same technology used by professional applications like:
-          - Mozilla Firefox
-          - VLC Media Player
-          - 7-Zip
-          - And thousands of other legitimate applications
-          
           **Benefits:**
           - ✅ Significantly lower false positive rate
           - ✅ Trusted by Windows Defender and major AV vendors
