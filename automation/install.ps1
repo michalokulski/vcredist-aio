@@ -11,6 +11,8 @@
     Suppress console output during installation
 .PARAMETER SkipValidation
     Skip pre-installation validation checks
+.PARAMETER PackageFilter
+    Array of years to filter packages (e.g., "2022", "2019", "2015", "2013")
 #>
 
 param(
@@ -19,6 +21,9 @@ param(
     
     [Parameter(Mandatory = $false)]
     [string] $LogDir,
+    
+    [Parameter(Mandatory = $false)]
+    [string[]] $PackageFilter,
     
     [switch] $Silent = $false,
     
@@ -227,6 +232,51 @@ function Get-PackageManifest {
     
     # Sort by year (ascending), then architecture (x86 before x64)
     $manifest = $manifest | Sort-Object -Property Year, Architecture
+    
+    # Apply package filter if specified
+    if ($PackageFilter -and $PackageFilter.Count -gt 0) {
+        Write-Log "Applying package filter: $($PackageFilter -join ', ')" -Level INFO
+        $originalCount = $manifest.Count
+        
+        $filteredManifest = @()
+        foreach ($pkg in $manifest) {
+            $fileName = $pkg.FileName
+            $matched = $false
+            
+            foreach ($filter in $PackageFilter) {
+                # Match year patterns (2022, 2019, 2015, 2013, 2012, 2010, 2008, 2005)
+                # 2015+ packages contain "2015Plus" in filename
+                if ($filter -match '^\d{4}$') {
+                    $filterYear = [int]$filter
+                    if ($filterYear -ge 2015) {
+                        # 2015-2022 all use the unified runtime (2015Plus)
+                        if ($fileName -match '2015Plus') {
+                            $matched = $true
+                            break
+                        }
+                    } else {
+                        # Older versions have year in filename
+                        if ($fileName -match $filter) {
+                            $matched = $true
+                            break
+                        }
+                    }
+                } elseif ($fileName -match $filter) {
+                    # Direct string matching (e.g., "VSTOR", "x64", "x86")
+                    $matched = $true
+                    break
+                }
+            }
+            
+            if ($matched) {
+                $filteredManifest += $pkg
+            }
+        }
+        
+        $manifest = $filteredManifest
+        $filteredCount = $manifest.Count
+        Write-Log "Filtered to $filteredCount package(s) (from $originalCount total)" -Level INFO
+    }
     
     return $manifest
 }

@@ -347,7 +347,34 @@ Get-Process | Where-Object { $_.Name -like '*vcredist*' -or $_.Name -like '*nsis
 
 # Check Windows Installer service
 Get-Service msiserver
+
+# Test package filtering
+.\automation\install.ps1 -PackageFilter "2022" -WhatIf
+
+# Test uninstaller duplicate detection
+.\automation\uninstall.ps1 -WhatIf  # Should show unique count
 ```
+
+## Troubleshooting Runtime Issues
+
+### Duplicate Package Detection (Uninstaller)
+
+**Symptom:** Uninstaller shows more packages than expected (e.g., 18 instead of 13)
+
+**Cause:** x86 packages appear in both `HKLM:\Software\Uninstall` and `HKLM:\Software\WOW6432Node\Uninstall` on 64-bit systems due to registry redirection.
+
+**Solution:** The uninstaller now automatically deduplicates based on `UninstallString`. Check logs for messages like:
+```
+Found 13 unique package(s) (18 registry entries, 5 duplicates removed)
+```
+
+### Package Filtering Not Working
+
+**Symptom:** `/PACKAGES="2022"` parameter installs all 2015-2022 runtimes
+
+**Explanation:** Microsoft Visual C++ 2015-2022 all use the **unified runtime** (labeled as "2015Plus" in filenames). Filtering by 2015, 2017, 2019, or 2022 will install the same x86 and x64 packages because they share the same redistributable.
+
+**Workaround:** To install only newer runtimes, use `/PACKAGES="2015"` (which includes all 2015-2022).
 
 ## Contact & Support
 

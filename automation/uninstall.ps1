@@ -40,7 +40,10 @@ param(
 $ErrorActionPreference = "Continue"
 $WarningPreference = "Continue"
 
-# Resolve script directory for default paths
+# Track uninstalled package identifiers to detect duplicate registry entries
+$script:processedPackages = @{}
+
+# Resolve script directory for logging paths
 $scriptDir = $PSScriptRoot
 if ([string]::IsNullOrWhiteSpace($scriptDir)) {
     $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -167,10 +170,22 @@ function Get-InstalledVCRedist {
         }
     }
     
+    $totalRegistryEntries = $vcRedistPackages.Count
+    
+    # Deduplicate packages based on UninstallString (x86 packages appear in both registry hives on 64-bit systems)
+    $vcRedistPackages = $vcRedistPackages | Sort-Object -Property UninstallString -Unique
+    
+    $uniquePackages = $vcRedistPackages.Count
+    $duplicatesRemoved = $totalRegistryEntries - $uniquePackages
+    
     # Sort by name and version
     $vcRedistPackages = $vcRedistPackages | Sort-Object DisplayName, DisplayVersion
     
-    Write-Log "Found $($vcRedistPackages.Count) Visual C++ package(s)" -Level SUCCESS
+    if ($duplicatesRemoved -gt 0) {
+        Write-Log "Found $uniquePackages unique package(s) ($totalRegistryEntries registry entries, $duplicatesRemoved duplicates removed)" -Level SUCCESS
+    } else {
+        Write-Log "Found $uniquePackages Visual C++ package(s)" -Level SUCCESS
+    }
     
     return $vcRedistPackages
 }
@@ -215,6 +230,20 @@ function Uninstall-VCRedistPackage {
             ExitCode = 0
         }
     }
+    
+    # Check if we already processed this exact uninstall command (duplicate registry entry)
+    if ($script:processedPackages.ContainsKey($uninstallCommand)) {
+        Write-Log "  [SKIP] Duplicate registry entry (already processed)" -Level INFO
+        return @{
+            PackageName = $Package.DisplayName
+            Success = $true
+            Message = "Duplicate registry entry - package already uninstalled"
+            ExitCode = 0
+        }
+    }
+    
+    # Mark this package as processed
+    $script:processedPackages[$uninstallCommand] = $true
     
     Write-Log "  Uninstall command: $uninstallCommand" -Level DEBUG
     

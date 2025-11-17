@@ -178,14 +178,9 @@ Section "MainSection" SEC01
   ${EndIf}
   
   ; Add package selection parameter if specified
-  ; TODO: install.ps1 doesn't support package filtering yet
   ${If} $PackageSelection != ""
-    ; Remove quotes if present
-    Push $R1
-    Call TrimQuotes
-    Pop $R1
-    StrCpy $PackageSelection $R1
-    DetailPrint "Package selection requested but not yet implemented: $PackageSelection"
+    StrCpy $1 "$1 -PackageFilter \`"$PackageSelection\`""
+    DetailPrint "Package filter: $PackageSelection"
   ${EndIf}
   
   ; Add skip validation flag if requested
