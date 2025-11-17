@@ -1,0 +1,252 @@
+; VCRedist AIO Offline Installer
+; Template for NSIS installer script
+
+!define PRODUCT_NAME "VCRedist AIO Offline Installer"
+!define PRODUCT_VERSION "{{VERSION}}"
+!define PRODUCT_PUBLISHER "VCRedist AIO"
+!define PRODUCT_WEB_SITE "https://github.com/michalokulski/vcredist-aio"
+!define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\VCRedistAIO"
+
+; Compression
+SetCompressor /SOLID lzma
+SetCompressorDictSize 64
+
+; Modern UI
+!include "MUI2.nsh"
+!include "LogicLib.nsh"
+!include "FileFunc.nsh"
+
+; Request admin privileges
+RequestExecutionLevel admin
+
+; Installer settings
+Name "${PRODUCT_NAME}"
+OutFile "VC_Redist_AIO_Offline.exe"
+InstallDir "$PROGRAMFILES\VCRedist_AIO"
+ShowInstDetails show
+
+; Variables for custom parameters
+Var ExtractOnly
+Var PackageSelection
+Var LogFile
+Var SkipValidation
+Var NoReboot
+
+; Modern UI Configuration
+!define MUI_ABORTWARNING
+!define MUI_ICON "${NSISDIR}\Contrib\Graphics\Icons\modern-install.ico"
+!define MUI_HEADERIMAGE
+!define MUI_HEADERIMAGE_BITMAP "${NSISDIR}\Contrib\Graphics\Header\nsis.bmp"
+!define MUI_WELCOMEFINISHPAGE_BITMAP "${NSISDIR}\Contrib\Graphics\Wizard\nsis.bmp"
+
+; Pages
+!insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_PAGE_FINISH
+
+; Uninstaller pages
+!insertmacro MUI_UNPAGE_CONFIRM
+!insertmacro MUI_UNPAGE_INSTFILES
+
+; Language
+!insertmacro MUI_LANGUAGE "English"
+
+; Version Information
+VIProductVersion "{{VERSION}}"
+VIAddVersionKey "ProductName" "${PRODUCT_NAME}"
+VIAddVersionKey "CompanyName" "${PRODUCT_PUBLISHER}"
+VIAddVersionKey "FileDescription" "Offline installer for Microsoft Visual C++ Redistributables"
+VIAddVersionKey "FileVersion" "{{VERSION}}"
+VIAddVersionKey "ProductVersion" "{{VERSION}}"
+VIAddVersionKey "LegalCopyright" "(c) 2025 VCRedist AIO"
+
+; Function to trim quotes from parameter values
+Function TrimQuotes
+  Exch $R0
+  Push $R1
+  Push $R2
+  StrCpy $R2 "$\""
+  StrCpy $R1 $R0 1
+  StrCmp $R1 $R2 0 +2
+    StrCpy $R0 $R0 "" 1
+  StrCpy $R1 $R0 1 -1
+  StrCmp $R1 $R2 0 +2
+    StrCpy $R0 $R0 -1
+  Pop $R2
+  Pop $R1
+  Exch $R0
+FunctionEnd
+
+; Initialize function - Parse command line parameters
+Function .onInit
+  ; Initialize variables
+  StrCpy $ExtractOnly "0"
+  StrCpy $PackageSelection ""
+  StrCpy $LogFile ""
+  StrCpy $SkipValidation "0"
+  StrCpy $NoReboot "0"
+  
+  ; Get command line parameters
+  ${GetParameters} $R0
+  
+  ; Check for /EXTRACT parameter
+  ClearErrors
+  ${GetOptions} $R0 "/EXTRACT=" $R1
+  ${IfNot} ${Errors}
+    StrCpy $ExtractOnly "1"
+    ; Remove quotes from path if present
+    Push $R1
+    Call TrimQuotes
+    Pop $R1
+    StrCpy $INSTDIR $R1
+  ${EndIf}
+  
+  ; Check for /PACKAGES parameter
+  ClearErrors
+  ${GetOptions} $R0 "/PACKAGES=" $R1
+  ${IfNot} ${Errors}
+    ; Remove quotes from value if present
+    Push $R1
+    Call TrimQuotes
+    Pop $R1
+    StrCpy $PackageSelection $R1
+  ${EndIf}
+  
+  ; Check for /LOGFILE parameter
+  ClearErrors
+  ${GetOptions} $R0 "/LOGFILE=" $R1
+  ${IfNot} ${Errors}
+    ; Remove quotes from path if present
+    Push $R1
+    Call TrimQuotes
+    Pop $R1
+    StrCpy $LogFile $R1
+  ${EndIf}
+  
+  ; Check for /SKIPVALIDATION parameter
+  ClearErrors
+  ${GetOptions} $R0 "/SKIPVALIDATION" $R1
+  ${IfNot} ${Errors}
+    StrCpy $SkipValidation "1"
+  ${EndIf}
+  
+  ; Check for /NOREBOOT parameter
+  ClearErrors
+  ${GetOptions} $R0 "/NOREBOOT" $R1
+  ${IfNot} ${Errors}
+    StrCpy $NoReboot "1"
+  ${EndIf}
+FunctionEnd
+
+; Installer Section
+Section "MainSection" SEC01
+  SetOutPath "$INSTDIR"
+  
+  DetailPrint "Extracting installation files..."
+  
+  ; Extract installer script
+  File "install.ps1"
+  
+  ; Extract uninstaller script
+  File "uninstall.ps1"
+  
+  ; Create packages directory
+  CreateDirectory "$INSTDIR\packages"
+  SetOutPath "$INSTDIR\packages"
+  
+  ; Extract all packages
+{{FILE_LIST}}
+  
+  ; Check if extract-only mode
+  StrCmp $ExtractOnly "1" 0 +4
+    DetailPrint "Extract-only mode: Files extracted to $INSTDIR"
+    DetailPrint "Skipping installation as requested"
+    Goto SkipInstallation
+  ; Continue with installation
+  
+  DetailPrint "Running PowerShell installation script..."
+  SetOutPath "$INSTDIR"
+  
+  ; Build PowerShell command line arguments
+  StrCpy $1 "-PackageDir \`"$INSTDIR\packages\`""
+  
+  ; Add log file parameter if specified
+  ${If} $LogFile != ""
+    StrCpy $1 "$1 -LogDir \`"$LogFile\`""
+  ${Else}
+    StrCpy $1 "$1 -LogDir \`"$TEMP\`""
+  ${EndIf}
+  
+  ; Add package selection parameter if specified
+  ; TODO: install.ps1 doesn't support package filtering yet
+  ${If} $PackageSelection != ""
+    ; Remove quotes if present
+    Push $R1
+    Call TrimQuotes
+    Pop $R1
+    StrCpy $PackageSelection $R1
+    DetailPrint "Package selection requested but not yet implemented: $PackageSelection"
+  ${EndIf}
+  
+  ; Add skip validation flag if requested
+  StrCmp $SkipValidation "1" 0 +2
+    StrCpy $1 "$1 -SkipValidation"
+  ; Continue building command line
+  
+  ; Add silent flag if running in silent mode
+  ${If} ${Silent}
+    StrCpy $1 "$1 -Silent"
+  ${EndIf}
+  
+  ; Run PowerShell installer
+  DetailPrint "Parameters: $1"
+  ExecWait 'powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File "$INSTDIR\install.ps1" $1' $0
+  
+  ; Check exit code
+  DetailPrint "Installation exit code: $0"
+  
+  ${If} $0 == 0
+    DetailPrint "Installation completed successfully"
+  ${ElseIf} $0 == 1
+    DetailPrint "Installation completed with warnings"
+  ${ElseIf} $0 == 3010
+    DetailPrint "Installation completed (reboot required)"
+    StrCmp $NoReboot "1" +2
+      SetRebootFlag true
+    ; Continue
+  ${Else}
+    DetailPrint "Installation exited with code: $0"
+  ${EndIf}
+  
+  ; Register uninstaller in Windows Apps & Features
+  WriteRegStr HKLM "${UNINSTALL_KEY}" "DisplayName" "${PRODUCT_NAME}"
+  WriteRegStr HKLM "${UNINSTALL_KEY}" "DisplayVersion" "${PRODUCT_VERSION}"
+  WriteRegStr HKLM "${UNINSTALL_KEY}" "Publisher" "${PRODUCT_PUBLISHER}"
+  WriteRegStr HKLM "${UNINSTALL_KEY}" "URLInfoAbout" "${PRODUCT_WEB_SITE}"
+  WriteRegStr HKLM "${UNINSTALL_KEY}" "DisplayIcon" "$INSTDIR\uninstall.exe"
+  WriteRegStr HKLM "${UNINSTALL_KEY}" "UninstallString" "$INSTDIR\uninstall.exe"
+  WriteRegDWORD HKLM "${UNINSTALL_KEY}" "NoModify" 1
+  WriteRegDWORD HKLM "${UNINSTALL_KEY}" "NoRepair" 1
+  
+  ; Create uninstaller executable
+  WriteUninstaller "$INSTDIR\uninstall.exe"
+  
+  SkipInstallation:
+  
+SectionEnd
+
+; Uninstaller Section
+Section "Uninstall"
+  ; Run uninstall script
+  ExecWait 'powershell.exe -ExecutionPolicy Bypass -NoProfile -File "$INSTDIR\uninstall.ps1" -Force -Silent'
+  
+  ; Remove uninstaller registry key
+  DeleteRegKey HKLM "${UNINSTALL_KEY}"
+  
+  ; Remove uninstaller files
+  Delete "$INSTDIR\uninstall.exe"
+  Delete "$INSTDIR\uninstall.ps1"
+  Delete "$INSTDIR\install.ps1"
+  RMDir /r "$INSTDIR\packages"
+  RMDir "$INSTDIR"
+SectionEnd
