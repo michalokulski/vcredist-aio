@@ -278,7 +278,13 @@ function Install-Package {
     Write-Log "  File: $($Package.FileName)" -Level DEBUG
     Write-Log "  Path: $($Package.FilePath)" -Level DEBUG
     
-    $installArgs = @("/install", "/quiet", "/norestart")
+    # Determine install arguments based on package year
+    # VCRedist 2005-2008 use different syntax than 2010+
+    $installArgs = if ($Package.Year -le 2008) {
+        @("/q")  # Old syntax for 2005-2008
+    } else {
+        @("/install", "/quiet", "/norestart")  # Modern syntax for 2010+
+    }
     
     try {
         $startTime = Get-Date
