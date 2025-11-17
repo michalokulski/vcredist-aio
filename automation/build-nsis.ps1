@@ -395,11 +395,11 @@ $nsisLines += $fileList
 $nsisLines += @(
     "  ",
     "  ; Check if extract-only mode",
-    "  `${If} `$ExtractOnly == `"1`"",
+    "  StrCmp `$ExtractOnly `"1`" 0 +4",
     "    DetailPrint `"Extract-only mode: Files extracted to `$INSTDIR`"",
     "    DetailPrint `"Skipping installation as requested`"",
     "    Goto SkipInstallation",
-    "  `${EndIf}",
+    "  ; Continue with installation",
     "  ",
     "  DetailPrint `"Running PowerShell installation script...`"",
     "  SetOutPath `"`$INSTDIR`"",
@@ -420,9 +420,9 @@ $nsisLines += @(
     "  `${EndIf}",
     "  ",
     "  ; Add skip validation flag if requested",
-    "  `${If} `$SkipValidation == `"1`"",
+    "  StrCmp `$SkipValidation `"1`" 0 +2",
     "    StrCpy `$1 `"`$1 -SkipValidation`"",
-    "  `${EndIf}",
+    "  ; Continue building command line",
     "  ",
     "  ; Add silent flag if running in silent mode",
     "  `${If} `${Silent}",
@@ -442,9 +442,9 @@ $nsisLines += @(
     "    DetailPrint `"Installation completed with warnings`"",
     "  `${ElseIf} `$0 == 3010",
     "    DetailPrint `"Installation completed (reboot required)`"",
-    "    `${If} `$NoReboot != `"1`"",
+    "    StrCmp `$NoReboot `"1`" +2",
     "      SetRebootFlag true",
-    "    `${EndIf}",
+    "    ; Continue",
     "  `${Else}",
     "    DetailPrint `"Installation exited with code: `$0`"",
     "  `${EndIf}",
@@ -464,13 +464,14 @@ $nsisLines += @(
     "  ",
     "  SkipInstallation:",
     "  ",
-    "  ; Cleanup (only if not extract mode and not silent)",
-    "  `${If} `$ExtractOnly != `"1`"",
-    "  `${AndIf} `${Silent}",
+    "  ; Cleanup (only if not extract mode and in silent mode)",
+    "  StrCmp `$ExtractOnly `"1`" SkipCleanup",
+    "  `${If} `${Silent}",
     "    DetailPrint `"Cleaning up temporary files...`"",
     "    SetOutPath `"`$TEMP`"",
     "    RMDir /r `"`$INSTDIR`"",
     "  `${EndIf}",
+    "  SkipCleanup:",
     "  ",
     "SectionEnd",
     "",
@@ -543,8 +544,17 @@ try {
     if ($exitCode -ne 0) {
         Write-Error "❌ NSIS compilation failed with exit code: $exitCode"
         Write-Host "`n📋 NSIS build log saved to: $nsisLogFile" -ForegroundColor Yellow
-        Write-Host "`nLast 20 lines of output:" -ForegroundColor Yellow
-        $output | Select-Object -Last 20 | ForEach-Object { Write-Host "  $_" }
+        
+        # Display full log content on failure
+        if (Test-Path $nsisLogFile) {
+            Write-Host "`n📄 Full NSIS build log:" -ForegroundColor Yellow
+            Write-Host "================================" -ForegroundColor Yellow
+            Get-Content $nsisLogFile | ForEach-Object { Write-Host $_ }
+            Write-Host "================================" -ForegroundColor Yellow
+        } else {
+            Write-Host "`nLast 20 lines of output:" -ForegroundColor Yellow
+            $output | Select-Object -Last 20 | ForEach-Object { Write-Host "  $_" }
+        }
         exit 1
     }
     
