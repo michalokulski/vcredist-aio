@@ -386,8 +386,34 @@ foreach ($pkg in $packages) {
     $index++
 }
 
-# Phase 2: Confirmation
+# Phase 2: Safety Check
 if (-not $Force -and -not $WhatIf) {
+    # Check if running interactively
+    $canPrompt = $false
+    try {
+        # Test if we can actually prompt the user
+        $canPrompt = [Environment]::UserInteractive -and 
+                     ($Host.Name -notmatch 'ServerRemoteHost') -and
+                     -not [Console]::IsInputRedirected
+    } catch {
+        $canPrompt = $false
+    }
+    
+    if (-not $canPrompt) {
+        # Running non-interactively (e.g., from NSIS) without -Force
+        Write-Log "ERROR: Cannot run uninstaller without -Force flag in non-interactive mode" -Level ERROR
+        Write-Log " " -Level ERROR
+        Write-Log "The uninstaller must be run with the -Force parameter when executed" -Level ERROR
+        Write-Log "from scripts, scheduled tasks, or installers (like NSIS)." -Level ERROR
+        Write-Log " " -Level ERROR
+        Write-Log "Examples:" -Level INFO
+        Write-Log "  Interactive (with confirmation): .\uninstall.ps1" -Level INFO
+        Write-Log "  Non-interactive (no prompts):    .\uninstall.ps1 -Force" -Level INFO
+        Write-Log "  Silent mode:                     .\uninstall.ps1 -Force -Silent" -Level INFO
+        exit 1
+    }
+    
+    # Interactive mode - show warning and prompt
     Write-LogHeader "Phase 2: Confirmation Required"
     
     Write-Log " " -Level WARN
@@ -403,6 +429,8 @@ if (-not $Force -and -not $WhatIf) {
         Write-Log "Uninstallation cancelled by user" -Level INFO
         exit 0
     }
+} elseif ($Force) {
+    Write-Log "Running with -Force flag: Skipping confirmation" -Level WARN
 }
 
 # Phase 3: Uninstallation

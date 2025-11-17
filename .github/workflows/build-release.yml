@@ -48,6 +48,7 @@ jobs:
           
           # Copy standalone installer script
           Copy-Item -Path 'automation/install.ps1' -Destination $releaseDir -Force
+          Copy-Item -Path 'automation/uninstall.ps1' -Destination $releaseDir -Force
           
           # Create README for ZIP users
           $readmeContent = @"
@@ -66,6 +67,8 @@ jobs:
           
           - Silent mode: ``install.ps1 -Silent``
           - Skip validation: ``install.ps1 -SkipValidation``
+          - Package filtering: ``install.ps1 -PackageFilter "2022"``
+          - Multiple filters: ``install.ps1 -PackageFilter "2019","2022"``
           
           ## Log Files
           
@@ -178,16 +181,53 @@ jobs:
           VC_Redist_AIO_Offline.exe /S
           ``````
           
+          **Advanced Parameters:**
+          ``````cmd
+          # Extract files only (no installation)
+          VC_Redist_AIO_Offline.exe /EXTRACT="C:\\ExtractPath"
+          
+          # Install specific packages only
+          VC_Redist_AIO_Offline.exe /PACKAGES="2022,2019"
+          
+          # Custom log file location
+          VC_Redist_AIO_Offline.exe /LOGFILE="C:\\Logs\\vcredist.log"
+          
+          # Skip hash validation (faster, less secure)
+          VC_Redist_AIO_Offline.exe /SKIPVALIDATION
+          
+          # Prevent reboot flag
+          VC_Redist_AIO_Offline.exe /NOREBOOT
+          
+          # Combine parameters
+          VC_Redist_AIO_Offline.exe /S /PACKAGES="2022" /LOGFILE="C:\\Logs\\install.log"
+          ``````
+          
+          **Parameter Details:**
+          - `/S` - Silent mode (no UI)
+          - `/EXTRACT="path"` - Extract files without installing
+          - `/PACKAGES="list"` - Filter by years (2005,2008,2010,2012,2013,2015-2022)
+          - `/LOGFILE="path"` - Custom log location
+          - `/SKIPVALIDATION` - Skip SHA256 validation
+          - `/NOREBOOT` - Don't set reboot flag
+          
           ### Option 2: PowerShell Script (Advanced)
           1. Download and extract ``vc_redist_aio_offline.zip``
           2. Right-click ``install.ps1`` → Run with PowerShell (as Administrator)
           3. Optional flags:
              - ``-Silent``: Suppress console output
              - ``-SkipValidation``: Skip pre-installation checks (not recommended)
+             - ``-PackageFilter``: Install only specific years (e.g., ``"2022"``, ``"2019,2015"``)
           
-          **Silent Installation:**
+          **Examples:**
           ``````powershell
+          # Silent installation
           powershell -ExecutionPolicy Bypass -File install.ps1 -Silent
+          
+          # Install only 2022 runtime
+          powershell -ExecutionPolicy Bypass -File install.ps1 -PackageFilter "2022"
+          
+          # Install multiple specific years
+          powershell -ExecutionPolicy Bypass -File install.ps1 -PackageFilter "2019","2022"
           ``````
           
           ## Included Packages
@@ -212,8 +252,10 @@ jobs:
           - **Visual C++ 2010** (x86/x64)
           - **Visual C++ 2012** (x86/x64)
           - **Visual C++ 2013** (x86/x64)
-          - **Visual C++ 2015-2022** (x86/x64) - Unified runtime
+          - **Visual C++ 2015-2022** (x86/x64) - **Unified runtime** (same packages for 2015/2017/2019/2022)
           - **Visual Studio Tools for Office Runtime (VSTOR)**
+          
+          **Note:** Visual C++ 2015-2022 all use the same redistributable. Filtering by years 2015, 2017, 2019, or 2022 will install the same packages.
           
           All packages are **official Microsoft redistributables** downloaded from Winget manifests.
           
@@ -241,11 +283,33 @@ jobs:
           - ✅ Better compression (smaller file size)
           - ✅ Industry-standard packaging
           
+          ## Uninstaller
+          
+          The NSIS installer registers an uninstaller in Windows Apps & Features. You can also use the standalone uninstaller script:
+          
+          ``````powershell
+          # Interactive mode (requires confirmation)
+          .\\uninstall.ps1
+          
+          # Silent uninstall (requires -Force)
+          .\\uninstall.ps1 -Force -Silent
+          
+          # Preview what would be removed
+          .\\uninstall.ps1 -WhatIf
+          ``````
+          
+          **Features:**
+          - ✅ Automatic duplicate detection (fixes x86 packages appearing twice on 64-bit systems)
+          - ✅ Architecture detection from display names
+          - ✅ Safety confirmation (type "UNINSTALL" unless using `-Force`)
+          - ✅ Comprehensive logging with exit code interpretation
+          
           ## Log Files
           
-          Installation logs: ``vcredist-install-YYYYMMDD-HHMMSS.log`` (saved to ``%TEMP%``)
+          - Installation logs: ``vcredist-install-YYYYMMDD-HHMMSS.log`` (saved to ``%TEMP%``)
+          - Uninstallation logs: ``vcredist-uninstall-YYYYMMDD-HHMMSS.log``
           
-          Check the log file for detailed installation results and any errors.
+          Check the log files for detailed installation/uninstallation results and any errors.
           "@
           
           # Save to file

@@ -141,22 +141,43 @@ powershell -ExecutionPolicy Bypass -File install.ps1 -Silent
 
 The project includes a comprehensive uninstaller script that can remove all installed Visual C++ Redistributables.
 
-1. Download `uninstall.ps1` from the repository or extract from the NSIS installer
-2. Run as Administrator:
+**Important**: When running non-interactively (from scripts, NSIS, scheduled tasks), you **must** use the `-Force` parameter.
 
 ```powershell
-# Interactive mode (prompts for confirmation)
+# Interactive mode (prompts for confirmation by typing "UNINSTALL")
 .\automation\uninstall.ps1
 
-# Silent mode (no prompts, requires -Force)
+# Non-interactive mode (REQUIRED for scripts/automation)
+.\automation\uninstall.ps1 -Force
+
+# Silent mode (no console output, logs only)
 .\automation\uninstall.ps1 -Force -Silent
 
-# WhatIf mode (preview what would be removed)
+# WhatIf mode (preview without making changes)
 .\automation\uninstall.ps1 -WhatIf
 
 # Custom log directory
 .\automation\uninstall.ps1 -Force -LogDir "C:\Logs"
 ```
+
+**Parameters:**
+- `-Force` - **Required for non-interactive execution** (scripts, NSIS, automation). Skips interactive confirmation prompt.
+- `-Silent` - Suppress console output (logs still written to file)
+- `-WhatIf` - Preview what would be removed without making changes
+- `-LogDir` - Custom directory for log files (default: script directory)
+
+**Execution Contexts:**
+- **Interactive Console**: Can run with or without `-Force` (will prompt for confirmation)
+- **NSIS Uninstaller**: **Must** use `-Force` (no interactive prompt possible)
+- **Scripts/Automation**: **Must** use `-Force` (non-interactive by default)
+- **Scheduled Tasks**: **Must** use `-Force` (no user session)
+
+**Logging:**
+- Log files are automatically created with timestamp: `vcredist-uninstall-YYYYMMDD-HHMMSS.log`
+- Example: `vcredist-uninstall-20251117-133129.log`
+- If `-LogDir` not specified, logs are saved to script directory
+- If script directory is unavailable, falls back to `%TEMP%`
+- Creates log directory automatically if it doesn't exist
 
 **Safety Features:**
 - Requires typing "UNINSTALL" to confirm (unless `-Force` is used)

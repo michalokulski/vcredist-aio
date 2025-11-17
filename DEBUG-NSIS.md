@@ -1,5 +1,46 @@
 # NSIS Installer Debugging Guide
 
+## Log Files
+
+### Installation Logs
+
+**Location:** `%TEMP%\vcredist-install-YYYYMMDD-HHMMSS.log` (or custom path via `/LOGFILE`)
+
+```powershell
+# View latest installation log
+$latestLog = Get-ChildItem $env:TEMP -Filter "vcredist-install-*.log" | 
+    Sort-Object LastWriteTime -Descending | Select-Object -First 1
+Get-Content $latestLog.FullName
+```
+
+### Uninstallation Logs
+
+**Location:** Script directory or custom path via `-LogDir` parameter
+
+**File naming:** `vcredist-uninstall-YYYYMMDD-HHMMSS.log`
+
+```powershell
+# Run uninstaller with custom log directory
+.\automation\uninstall.ps1 -Force -Silent -LogDir "C:\Logs"
+
+# View latest uninstall log from custom directory
+$latestLog = Get-ChildItem "C:\Logs" -Filter "vcredist-uninstall-*.log" | 
+    Sort-Object LastWriteTime -Descending | Select-Object -First 1
+Get-Content $latestLog.FullName
+
+# View latest uninstall log from script directory (default)
+$latestLog = Get-ChildItem ".\automation" -Filter "vcredist-uninstall-*.log" | 
+    Sort-Object LastWriteTime -Descending | Select-Object -First 1
+Get-Content $latestLog.FullName
+```
+
+**Log fallback behavior:**
+1. First tries: Custom `-LogDir` path (if specified)
+2. Then tries: Script directory (`$PSScriptRoot`)
+3. Finally: `%TEMP%` directory (if directory creation fails)
+
+---
+
 ## Quick Diagnosis
 
 ### 1. Check Build Logs

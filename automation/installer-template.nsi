@@ -249,7 +249,7 @@ Section "Uninstall"
   ${If} ${FileExists} "$INSTDIR\uninstall.ps1"
     DetailPrint "Running uninstall script..."
     
-    ; Build uninstall arguments
+    ; Build uninstall arguments - ALWAYS include -Force for NSIS context
     StrCpy $1 "-Force"
     ${If} ${Silent}
       StrCpy $1 "$1 -Silent"
