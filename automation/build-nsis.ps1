@@ -408,14 +408,14 @@ $nsisLines += @(
     "  StrCpy `$1 `"-PackageDir ```"`$INSTDIR\packages```"`"",
     "  ",
     "  ; Add log file parameter if specified",
-    "  `${If} `$LogFile != `"`"",
+    "  `${If} `$LogFile != "",
     "    StrCpy `$1 `"`$1 -LogDir ```"`$LogFile```"`"",
     "  `${Else}",
     "    StrCpy `$1 `"`$1 -LogDir ```"`$TEMP```"`"",
     "  `${EndIf}",
     "  ",
     "  ; Add package selection parameter if specified",
-    "  `${If} `$PackageSelection != `"`"",
+    "  `${If} `$PackageSelection != "",
     "    StrCpy `$1 `"`$1 -PackageFilter ```"`$PackageSelection```"`"",
     "  `${EndIf}",
     "  ",
@@ -561,7 +561,17 @@ try {
     Write-Host "✔ NSIS compilation successful" -ForegroundColor Green
     
 } catch {
-    Write-Error "❌ NSIS execution failed: $($_.Exception.Message)"
+    Write-Host "`n❌ NSIS execution failed: $($_.Exception.Message)" -ForegroundColor Red
+    
+    # Try to display the log file if it exists
+    if (Test-Path $nsisLogFile) {
+        Write-Host "`n📄 Full NSIS build log:" -ForegroundColor Yellow
+        Write-Host "================================" -ForegroundColor Yellow
+        Get-Content $nsisLogFile | ForEach-Object { Write-Host $_ }
+        Write-Host "================================" -ForegroundColor Yellow
+    }
+    
+    Write-Error "NSIS compilation failed"
     exit 1
 }
 
