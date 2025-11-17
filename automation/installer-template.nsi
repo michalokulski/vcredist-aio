@@ -22,7 +22,7 @@ RequestExecutionLevel admin
 ; Installer settings
 Name "${PRODUCT_NAME}"
 OutFile "VC_Redist_AIO_Offline.exe"
-InstallDir "$PROGRAMFILES\VCRedist_AIO"
+InstallDir "$PROGRAMFILES64\VCRedist_AIO"
 ShowInstDetails show
 
 ; Variables for custom parameters
@@ -158,12 +158,21 @@ Section "MainSection" SEC01
 {{FILE_LIST}}
   
   ; Check if extract-only mode
-  StrCmp $ExtractOnly "1" 0 +4
+  ${If} $ExtractOnly == "1"
     DetailPrint "Extract-only mode: Files extracted to $INSTDIR"
     DetailPrint "Skipping installation as requested"
-    Goto SkipInstallation
-  ; Continue with installation
+    
+    ; If running in silent mode, just quit
+    ${If} ${Silent}
+      Quit
+    ${Else}
+      ; Interactive mode - show message box
+      MessageBox MB_OK "Files extracted successfully to:$\n$\n$INSTDIR$\n$\nYou can now run install.ps1 manually."
+      Quit
+    ${EndIf}
+  ${EndIf}
   
+  ; Continue with installation
   DetailPrint "Running PowerShell installation script..."
   SetOutPath "$INSTDIR"
   
@@ -184,9 +193,9 @@ Section "MainSection" SEC01
   ${EndIf}
   
   ; Add skip validation flag if requested
-  StrCmp $SkipValidation "1" 0 +2
+  ${If} $SkipValidation == "1"
     StrCpy $1 "$1 -SkipValidation"
-  ; Continue building command line
+  ${EndIf}
   
   ; Add silent flag if running in silent mode
   ${If} ${Silent}
@@ -206,9 +215,9 @@ Section "MainSection" SEC01
     DetailPrint "Installation completed with warnings"
   ${ElseIf} $0 == 3010
     DetailPrint "Installation completed (reboot required)"
-    StrCmp $NoReboot "1" +2
+    ${If} $NoReboot != "1"
       SetRebootFlag true
-    ; Continue
+    ${EndIf}
   ${Else}
     DetailPrint "Installation exited with code: $0"
   ${EndIf}
@@ -226,22 +235,62 @@ Section "MainSection" SEC01
   ; Create uninstaller executable
   WriteUninstaller "$INSTDIR\uninstall.exe"
   
-  SkipInstallation:
-  
 SectionEnd
 
 ; Uninstaller Section
 Section "Uninstall"
-  ; Run uninstall script
-  ExecWait 'powershell.exe -ExecutionPolicy Bypass -NoProfile -File "$INSTDIR\uninstall.ps1" -Force -Silent'
+  ; Show confirmation dialog (unless silent)
+  ${IfNot} ${Silent}
+    MessageBox MB_YESNO|MB_ICONQUESTION "This will run the VCRedist AIO uninstaller.$\n$\nWARNING: This will attempt to remove all Visual C++ Redistributables, which may break applications that depend on them.$\n$\nDo you want to continue?" IDYES +2
+    Abort "Uninstallation cancelled by user"
+  ${EndIf}
+  
+  ; Run uninstall script if it exists
+  ${If} ${FileExists} "$INSTDIR\uninstall.ps1"
+    DetailPrint "Running uninstall script..."
+    
+    ; Build uninstall arguments
+    StrCpy $1 "-Force"
+    ${If} ${Silent}
+      StrCpy $1 "$1 -Silent"
+    ${EndIf}
+    
+    ; Execute uninstall script
+    ExecWait 'powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File "$INSTDIR\uninstall.ps1" $1' $0
+    
+    DetailPrint "Uninstall script exit code: $0"
+    
+    ${If} $0 == 0
+      DetailPrint "Uninstallation completed successfully"
+    ${Else}
+      DetailPrint "Uninstallation completed with warnings (exit code: $0)"
+    ${EndIf}
+  ${Else}
+    DetailPrint "Uninstall script not found - skipping package removal"
+  ${EndIf}
   
   ; Remove uninstaller registry key
   DeleteRegKey HKLM "${UNINSTALL_KEY}"
   
-  ; Remove uninstaller files
+  ; Remove installation files
   Delete "$INSTDIR\uninstall.exe"
   Delete "$INSTDIR\uninstall.ps1"
   Delete "$INSTDIR\install.ps1"
-  RMDir /r "$INSTDIR\packages"
+  
+  ; Remove packages directory (only if empty or user confirms)
+  ${If} ${FileExists} "$INSTDIR\packages\*.*"
+    ${IfNot} ${Silent}
+      MessageBox MB_YESNO "Remove downloaded package files?$\n$\nDirectory: $INSTDIR\packages" IDYES +2
+      Goto SkipPackageRemoval
+    ${EndIf}
+    RMDir /r "$INSTDIR\packages"
+    SkipPackageRemoval:
+  ${EndIf}
+  
+  ; Remove installation directory (only if empty)
   RMDir "$INSTDIR"
+  
+  ${IfNot} ${Silent}
+    MessageBox MB_OK "VCRedist AIO has been uninstalled.$\n$\nNote: Visual C++ Redistributables may still be installed on your system if the uninstall script was not run or failed."
+  ${EndIf}
 SectionEnd
