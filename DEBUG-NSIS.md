@@ -1,4 +1,4 @@
-# NSIS Installer Debugging Guide
+﻿# NSIS Installer Debugging Guide
 
 ## Log Files
 

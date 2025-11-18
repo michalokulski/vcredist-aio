@@ -1,4 +1,4 @@
-# VC Redist AIO — Winget-based Offline Installer
+﻿# VC Redist AIO — Winget-based Offline Installer
 
 ![Latest Release](https://img.shields.io/github/v/release/michalokulski/vcredist-aio)
 ![Build Status](https://github.com/michalokulski/vcredist-aio/actions/workflows/build-release.yml/badge.svg)

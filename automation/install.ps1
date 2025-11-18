@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     VCRedist AIO Offline Installer - Installation Engine
 .DESCRIPTION

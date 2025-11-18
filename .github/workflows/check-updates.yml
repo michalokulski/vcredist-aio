@@ -1,4 +1,4 @@
-name: Check for Winget Updates
+﻿name: Check for Winget Updates
 
 permissions:
   contents: write

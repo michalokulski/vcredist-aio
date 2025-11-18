@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     VCRedist AIO Uninstaller - Removes Microsoft Visual C++ Redistributables
 .DESCRIPTION

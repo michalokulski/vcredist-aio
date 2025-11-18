@@ -1,4 +1,4 @@
-name: Build Offline VCRedist AIO
+﻿name: Build Offline VCRedist AIO
 
 permissions:
   contents: write
@@ -216,13 +216,13 @@ jobs:
           **Advanced Parameters:**
           ``````cmd
           # Extract files only (no installation)
-          VC_Redist_AIO_Offline.exe /EXTRACT="C:\\ExtractPath"
+          VC_Redist_AIO_Offline.exe /S /EXTRACT="C:\ExtractPath\"
           
           # Install specific packages only
           VC_Redist_AIO_Offline.exe /PACKAGES="2022,2019"
           
           # Custom log file location
-          VC_Redist_AIO_Offline.exe /LOGFILE="C:\\Logs\\vcredist.log"
+          VC_Redist_AIO_Offline.exe /LOGFILE="C:\Logs\vcredist.log"
           
           # Skip hash validation (faster, less secure)
           VC_Redist_AIO_Offline.exe /SKIPVALIDATION
@@ -231,7 +231,7 @@ jobs:
           VC_Redist_AIO_Offline.exe /NOREBOOT
           
           # Combine parameters
-          VC_Redist_AIO_Offline.exe /S /PACKAGES="2022" /LOGFILE="C:\\Logs\\install.log"
+          VC_Redist_AIO_Offline.exe /S /PACKAGES="2022" /LOGFILE="C:\Logs\install.log"
           ``````
           
           **Parameter Details:**

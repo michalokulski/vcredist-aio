@@ -1,4 +1,4 @@
-# NSIS Build Diagnostics Script
+﻿# NSIS Build Diagnostics Script
 # Run this to diagnose build issues
 
 param(
