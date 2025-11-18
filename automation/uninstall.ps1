@@ -441,7 +441,7 @@ foreach ($pkg in $packages) {
     $index++
 }
 
-# SAFETY CHECK REMOVED COMPLETELY - NSIS handles confirmation
+# Note: No interactive confirmation prompt. Use -WhatIf to preview, or -Force for automation.
 
 # Phase 3: Uninstallation
 Write-LogHeader "Phase 3: Uninstalling Packages"

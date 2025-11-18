@@ -8,6 +8,7 @@ dist/downloads/
 dist/packages/
 dist/installer.ps1
 dist/install.ps1
+dist/
 
 build/*.exe
 build/*.zip

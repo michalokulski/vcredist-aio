@@ -52,7 +52,7 @@ function Invoke-WithRetry {
     }
 }
 
-function Get-DownloadUrlFromManifest {
+function Get-InstallerInfoFromManifest {
     param(
         [Parameter(Mandatory = $true)]
         [string] $PackageId,
@@ -105,7 +105,8 @@ function Get-DownloadUrlFromManifest {
         $content = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($fileObj.content))
 
         $urlMatch = [regex]::Match($content, 'InstallerUrl:\s*([^\s#]+)', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [System.Text.RegularExpressions.RegexOptions]::Multiline)
-        
+        $shaMatch = [regex]::Match($content, 'InstallerSha256:\s*([0-9A-Fa-f]{64})', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [System.Text.RegularExpressions.RegexOptions]::Multiline)
+
         if ($urlMatch.Success) {
             $url = $urlMatch.Groups[1].Value.Trim()
             $quoteChar = [char]34
@@ -116,8 +117,10 @@ function Get-DownloadUrlFromManifest {
             while ($url.Length -gt 0 -and ($url[-1] -eq $quoteChar -or $url[-1] -eq $singleQuote)) {
                 $url = $url.Substring(0, $url.Length - 1)
             }
+            $sha = if ($shaMatch.Success) { $shaMatch.Groups[1].Value.Trim() } else { $null }
             Write-Host "    Found URL: $url" -ForegroundColor DarkGray
-            return $url
+            if ($sha) { Write-Host "    Found SHA256: $sha" -ForegroundColor DarkGray }
+            return [pscustomobject]@{ Url = $url; Sha256 = $sha }
         }
 
         Write-Host "    No InstallerUrl found in manifest" -ForegroundColor DarkGray
@@ -160,10 +163,10 @@ foreach ($pkg in $packages) {
 
     Write-Host "  Version: $($pkg.version)"
 
-    $downloadUrl = Get-DownloadUrlFromManifest -PackageId $pkg.id -Version $pkg.version -Headers $headers
+    $installerInfo = Get-InstallerInfoFromManifest -PackageId $pkg.id -Version $pkg.version -Headers $headers
 
-    if (-not $downloadUrl) {
-        Write-Warning "⚠ Failed to get download URL for: $($pkg.id)"
+    if (-not $installerInfo) {
+        Write-Warning "⚠ Failed to get download info for: $($pkg.id)"
         $failedDownloads += $pkg.id
         continue
     }
@@ -173,11 +176,28 @@ foreach ($pkg in $packages) {
         $outputPath = Join-Path $downloadDir $fileName
         
         Write-Host "    Downloading to: $fileName" -ForegroundColor DarkGray
-        Invoke-WebRequest -Uri $downloadUrl -OutFile $outputPath -UseBasicParsing -ErrorAction Stop
+        Invoke-WebRequest -Uri $installerInfo.Url -OutFile $outputPath -UseBasicParsing -ErrorAction Stop
         return $outputPath
     } -Attempts 3 -DelaySeconds 5
 
     if ($downloadResult -and (Test-Path $downloadResult)) {
+        # Optional: verify SHA256 if available
+        if ($installerInfo.Sha256) {
+            try {
+                $actual = (Get-FileHash -Algorithm SHA256 $downloadResult).Hash
+                if ($actual -ne $installerInfo.Sha256) {
+                    Write-Warning "  ⚠ SHA256 mismatch for $($pkg.id). Expected: $($installerInfo.Sha256) Got: $actual"
+                    Remove-Item -Path $downloadResult -Force -ErrorAction SilentlyContinue
+                    $failedDownloads += $pkg.id
+                    continue
+                } else {
+                    Write-Host "    SHA256 verified" -ForegroundColor DarkGray
+                }
+            } catch {
+                Write-Warning "  ⚠ Failed to compute SHA256: $($_.Exception.Message)"
+            }
+        }
+
         $size = (Get-Item $downloadResult).Length / 1MB
         Write-Host "  ✔ Downloaded ($([math]::Round($size, 2)) MB)"
         $downloadedFiles += @{

@@ -127,6 +127,17 @@ Function .onInit
     Pop $R1
     StrCpy $LogFile $R1
   ${EndIf}
+
+  ; New: Check for /LOGDIR parameter (preferred alias)
+  ClearErrors
+  ${GetOptions} $R0 "/LOGDIR=" $R1
+  ${IfNot} ${Errors}
+    ; Remove quotes from path if present
+    Push $R1
+    Call TrimQuotes
+    Pop $R1
+    StrCpy $LogFile $R1
+  ${EndIf}
   
   ; Check for /SKIPVALIDATION parameter
   ClearErrors

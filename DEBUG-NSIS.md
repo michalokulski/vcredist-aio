@@ -4,7 +4,7 @@
 
 ### Installation Logs
 
-**Location:** `%TEMP%\vcredist-install-YYYYMMDD-HHMMSS.log` (or custom path via `/LOGFILE`)
+**Location:** `%TEMP%\vcredist-install-YYYYMMDD-HHMMSS.log` (or custom path via `/LOGDIR` — `/LOGFILE` supported as alias)
 
 ```powershell
 # View latest installation log

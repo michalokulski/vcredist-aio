@@ -47,6 +47,14 @@ if ([string]::IsNullOrWhiteSpace($PackageDir)) {
     $PackageDir = Join-Path $scriptDir "packages"
 }
 
+# Normalize package filter input (support comma-separated string from NSIS)
+if ($PackageFilter) {
+    $PackageFilter = @(
+        $PackageFilter | ForEach-Object { ($_ -split '\s*,\s*') } |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+}
+
 # Handle log directory - ONLY use custom path if explicitly specified
 if ([string]::IsNullOrWhiteSpace($LogDir)) {
     # No custom log directory - use TEMP as default

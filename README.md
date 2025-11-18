@@ -85,10 +85,13 @@ VC_Redist_AIO_Offline.exe /EXTRACT="C:\ExtractPath"
 # Install specific packages only (comma-separated)
 VC_Redist_AIO_Offline.exe /PACKAGES="2022,2019"
 
-# Custom log file location
-VC_Redist_AIO_Offline.exe /LOGFILE="C:\Logs\vcredist.log"
+# Custom log directory (preferred)
+VC_Redist_AIO_Offline.exe /LOGDIR="C:\Logs"
 
-# Skip hash validation (faster, less secure)
+# Legacy alias (treated as directory):
+VC_Redist_AIO_Offline.exe /LOGFILE="C:\Logs"
+
+# Skip pre-installation validation (admin/disk checks)
 VC_Redist_AIO_Offline.exe /SKIPVALIDATION
 
 # Prevent reboot flag even if exit code is 3010
@@ -102,8 +105,9 @@ VC_Redist_AIO_Offline.exe /S /PACKAGES="2019,2022" /LOGFILE="C:\Logs\install.log
 - `/S` - Silent mode (no UI)
 - `/EXTRACT="path"` - Extract files to specified directory without installing
 - `/PACKAGES="list"` - Install only specified package years (comma-separated: 2005,2008,2010,2012,2013,2015,2017,2019,2022). Note: 2015-2022 all use the unified "2015Plus" runtime, so filtering by 2015, 2017, 2019, or 2022 will install the same 2015+ packages.
-- `/LOGFILE="path"` - Save installation log to custom location (default: `%TEMP%`)
-- `/SKIPVALIDATION` - Skip SHA256 hash validation of packages (not recommended)
+- `/LOGDIR="path"` - Save installation logs to a custom directory (default: `%TEMP%`)
+- `/LOGFILE="path"` - Legacy alias for log directory (treated as directory)
+- `/SKIPVALIDATION` - Skip pre-installation validation (admin and disk space checks)
 - `/NOREBOOT` - Don't set reboot flag even if installer returns exit code 3010
 
 ### Option 2: PowerShell Script (Advanced)
@@ -157,7 +161,7 @@ Or use command line:
 **Important**: When running non-interactively (from scripts, NSIS, scheduled tasks), you **must** use the `-Force` parameter.
 
 ```powershell
-# Interactive mode (prompts for confirmation by typing "UNINSTALL")
+# Interactive mode
 .\automation\uninstall.ps1
 
 # Non-interactive mode (REQUIRED for scripts/automation)
@@ -196,8 +200,8 @@ Or use command line:
 - Creates log directory automatically if it doesn't exist
 
 **Safety Features:**
-- Requires typing "UNINSTALL" to confirm (unless `-Force` is used)
-- Detects architecture (x86/x64) from display names
+ - No confirmation prompt; use `-WhatIf` to preview actions
+ - Detects architecture (x86/x64) from display names
 - Deduplicates registry entries (x86 packages appear in both registry hives on 64-bit systems)
 - Handles both MSI and EXE-based uninstallers
 - Comprehensive logging with exit code interpretation
@@ -337,7 +341,7 @@ This separation allows for:
    - `5100` = System requirements not met
 5. **Extract and inspect**: Use `/EXTRACT="C:\Temp"` to extract files without installing
 6. **Test specific packages**: Use `/PACKAGES="2022"` to test installation of a single package version
-7. **Skip validation**: If hash validation fails, use `/SKIPVALIDATION` (not recommended for production)
+7. **Skip validation**: Use `/SKIPVALIDATION` to bypass admin/disk checks for quick tests (not recommended)
 
 ### Build Issues
 
