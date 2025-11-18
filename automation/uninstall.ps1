@@ -52,26 +52,60 @@ if ([string]::IsNullOrWhiteSpace($scriptDir)) {
     $scriptDir = Get-Location
 }
 
-# Set default log directory
+# Handle log directory with proper fallback chain
 if ([string]::IsNullOrWhiteSpace($LogDir)) {
-    $LogDir = $scriptDir
+    # No custom log directory specified - use defaults
+    if (-not [string]::IsNullOrWhiteSpace($scriptDir) -and (Test-Path $scriptDir)) {
+        $LogDir = $scriptDir
+    } else {
+        # Script directory is invalid/missing - use TEMP
+        $LogDir = $env:TEMP
+        Write-Warning "Script directory unavailable, using TEMP for logs: $LogDir"
+    }
+} else {
+    # Custom log directory specified - validate and create if needed
+    if (-not (Test-Path $LogDir)) {
+        try {
+            New-Item -ItemType Directory -Path $LogDir -Force -ErrorAction Stop | Out-Null
+            Write-Host "✔ Created log directory: $LogDir" -ForegroundColor Green
+        } catch {
+            Write-Warning "Failed to create custom log directory: $($_.Exception.Message)"
+            Write-Warning "Falling back to TEMP: $env:TEMP"
+            $LogDir = $env:TEMP
+        }
+    }
 }
 
 # ============================================================================
 # LOGGING INFRASTRUCTURE
 # ============================================================================
 
-# Ensure log directory exists
-if (-not (Test-Path $LogDir)) {
-    try {
-        New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
-    } catch {
-        $LogDir = $env:TEMP
-    }
-}
-
 $script:LogFile = Join-Path $LogDir "vcredist-uninstall-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
 $script:UninstallStartTime = Get-Date
+
+# Validate log file can be created
+try {
+    # Test write to log file
+    "Uninstallation started at: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" | Out-File -FilePath $script:LogFile -Encoding UTF8 -ErrorAction Stop
+} catch {
+    Write-Error "CRITICAL: Cannot create log file at: $script:LogFile"
+    Write-Error "Error: $($_.Exception.Message)"
+    Write-Host "Log directory: $LogDir" -ForegroundColor Yellow
+    Write-Host "Attempting emergency fallback to TEMP..." -ForegroundColor Yellow
+    
+    # Emergency fallback
+    $LogDir = $env:TEMP
+    $script:LogFile = Join-Path $LogDir "vcredist-uninstall-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
+    
+    try {
+        "Uninstallation started at: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" | Out-File -FilePath $script:LogFile -Encoding UTF8 -ErrorAction Stop
+        Write-Host "Emergency fallback successful. Log file: $script:LogFile" -ForegroundColor Green
+    } catch {
+        Write-Error "FATAL: Cannot create log file even in TEMP directory!"
+        Write-Error "Uninstallation cannot proceed without logging capability."
+        exit 1
+    }
+}
 
 function Write-Log {
     param(
@@ -88,8 +122,16 @@ function Write-Log {
     $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
     $logEntry = "[$timestamp] [$Level] $Message"
     
-    # Write to log file
-    Add-Content -Path $script:LogFile -Value $logEntry -ErrorAction SilentlyContinue
+    # Write to log file with error handling
+    try {
+        Add-Content -Path $script:LogFile -Value $logEntry -ErrorAction Stop
+    } catch {
+        # If log writing fails, try to write to console at least
+        if (-not $Silent) {
+            Write-Host "[LOG ERROR] Failed to write to log file: $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host "[LOG ERROR] Log path was: $script:LogFile" -ForegroundColor Red
+        }
+    }
     
     # Write to console unless suppressed
     if (-not $NoConsole -and -not $Silent) {
