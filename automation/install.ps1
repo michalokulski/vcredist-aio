@@ -6,7 +6,7 @@
 .PARAMETER PackageDir
     Directory containing the redistributable executables
 .PARAMETER LogDir
-    Directory for installation logs (default: current directory)
+    Directory for installation logs (default: %TEMP%)
 .PARAMETER Silent
     Suppress console output during installation
 .PARAMETER SkipValidation
@@ -47,25 +47,23 @@ if ([string]::IsNullOrWhiteSpace($PackageDir)) {
     $PackageDir = Join-Path $scriptDir "packages"
 }
 
-# Handle log directory with proper fallback chain
+# Handle log directory - ONLY use custom path if explicitly specified
 if ([string]::IsNullOrWhiteSpace($LogDir)) {
-    # No custom log directory specified - use defaults
-    if (-not [string]::IsNullOrWhiteSpace($scriptDir) -and (Test-Path $scriptDir)) {
-        $LogDir = $scriptDir
-    } else {
-        # Script directory is invalid/missing - use TEMP
-        $LogDir = $env:TEMP
-        Write-Warning "Script directory unavailable, using TEMP for logs: $LogDir"
-    }
+    # No custom log directory - use TEMP as default
+    $LogDir = $env:TEMP
 } else {
     # Custom log directory specified - validate and create if needed
     if (-not (Test-Path $LogDir)) {
         try {
             New-Item -ItemType Directory -Path $LogDir -Force -ErrorAction Stop | Out-Null
-            Write-Host "✔ Created log directory: $LogDir" -ForegroundColor Green
+            if (-not $Silent) {
+                Write-Host "✔ Created log directory: $LogDir" -ForegroundColor Green
+            }
         } catch {
-            Write-Warning "Failed to create custom log directory: $($_.Exception.Message)"
-            Write-Warning "Falling back to TEMP: $env:TEMP"
+            if (-not $Silent) {
+                Write-Warning "Failed to create custom log directory: $($_.Exception.Message)"
+                Write-Warning "Falling back to TEMP: $env:TEMP"
+            }
             $LogDir = $env:TEMP
         }
     }
@@ -84,10 +82,12 @@ try {
     # Test write to log file
     "Installation started at: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" | Out-File -FilePath $script:LogFile -Encoding UTF8 -ErrorAction Stop
 } catch {
-    Write-Error "CRITICAL: Cannot create log file at: $script:LogFile"
-    Write-Error "Error: $($_.Exception.Message)"
-    Write-Host "Log directory: $LogDir" -ForegroundColor Yellow
-    Write-Host "Attempting emergency fallback to TEMP..." -ForegroundColor Yellow
+    if (-not $Silent) {
+        Write-Error "CRITICAL: Cannot create log file at: $script:LogFile"
+        Write-Error "Error: $($_.Exception.Message)"
+        Write-Host "Log directory: $LogDir" -ForegroundColor Yellow
+        Write-Host "Attempting emergency fallback to TEMP..." -ForegroundColor Yellow
+    }
     
     # Emergency fallback
     $LogDir = $env:TEMP
@@ -95,7 +95,9 @@ try {
     
     try {
         "Installation started at: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" | Out-File -FilePath $script:LogFile -Encoding UTF8 -ErrorAction Stop
-        Write-Host "Emergency fallback successful. Log file: $script:LogFile" -ForegroundColor Green
+        if (-not $Silent) {
+            Write-Host "Emergency fallback successful. Log file: $script:LogFile" -ForegroundColor Green
+        }
     } catch {
         Write-Error "FATAL: Cannot create log file even in TEMP directory!"
         Write-Error "Installation cannot proceed without logging capability."

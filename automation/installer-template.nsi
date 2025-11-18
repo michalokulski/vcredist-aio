@@ -184,13 +184,13 @@ Section "MainSection" SEC01
   ; Build PowerShell command line arguments
   StrCpy $1 "-PackageDir \`"$INSTDIR\packages\`""
   
-  ; Add log directory parameter if specified
+  ; Add log directory parameter if specified, otherwise DON'T pass it
+  ; This allows install.ps1 to use its default (TEMP)
   ${If} $LogFile != ""
-    ; Always treat as directory (user should pass directory path)
     StrCpy $1 "$1 -LogDir \`"$LogFile\`""
+    DetailPrint "Custom log directory: $LogFile"
   ${Else}
-    ; Default to TEMP directory
-    StrCpy $1 "$1 -LogDir \`"$TEMP\`""
+    DetailPrint "Using default log directory (TEMP)"
   ${EndIf}
   
   ; Add package selection parameter if specified

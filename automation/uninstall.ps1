@@ -5,22 +5,22 @@
     Detects and uninstalls all Microsoft Visual C++ Redistributable packages.
     WARNING: Uninstalling VC++ runtimes may break applications that depend on them.
 .PARAMETER Force
-    Skip confirmation prompts (dangerous - not recommended)
+    Skip confirmation prompts (required for non-interactive execution)
 .PARAMETER LogDir
-    Directory for uninstallation logs (default: current directory)
+    Directory for uninstallation logs (default: script directory)
 .PARAMETER Silent
     Suppress console output during uninstallation
 .PARAMETER WhatIf
     Show what would be uninstalled without actually doing it
 .EXAMPLE
     .\uninstall.ps1
-    # Interactive mode with confirmation
+    # Interactive mode with confirmation (only works in console)
 .EXAMPLE
     .\uninstall.ps1 -WhatIf
     # Preview what would be uninstalled
 .EXAMPLE
     .\uninstall.ps1 -Force -Silent
-    # Uninstall everything without prompts (dangerous!)
+    # Uninstall everything without prompts (for automation/NSIS)
 #>
 
 param(
@@ -391,6 +391,7 @@ Write-Log "Uninstallation started at: $script:UninstallStartTime" -Level INFO
 Write-Log "Log directory: $LogDir" -Level INFO
 Write-Log "Log file: $script:LogFile" -Level INFO
 Write-Log "WhatIf mode: $WhatIf" -Level INFO
+Write-Log "Force mode: $Force" -Level INFO
 
 # Check administrator privileges
 $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -400,10 +401,21 @@ if (-not $isAdmin) {
     Write-Log "WARNING: Not running as Administrator. Some uninstallations may fail." -Level WARN
     
     if (-not $Force -and -not $WhatIf) {
-        $response = Read-Host "Continue anyway? (yes/no)"
-        if ($response -ne "yes") {
-            Write-Log "Uninstallation cancelled by user" -Level INFO
-            exit 0
+        # Only try interactive prompt if NOT running from NSIS
+        try {
+            if ([Environment]::UserInteractive) {
+                $response = Read-Host "Continue anyway? (yes/no)"
+                if ($response -ne "yes") {
+                    Write-Log "Uninstallation cancelled by user" -Level INFO
+                    exit 0
+                }
+            } else {
+                Write-Log "Non-interactive mode without Force flag - aborting" -Level ERROR
+                exit 1
+            }
+        } catch {
+            Write-Log "Cannot prompt for confirmation in this context - aborting" -Level ERROR
+            exit 1
         }
     }
 }
@@ -429,52 +441,7 @@ foreach ($pkg in $packages) {
     $index++
 }
 
-# Phase 2: Safety Check
-if (-not $Force -and -not $WhatIf) {
-    # Check if running interactively
-    $canPrompt = $false
-    try {
-        # Test if we can actually prompt the user
-        $canPrompt = [Environment]::UserInteractive -and 
-                     ($Host.Name -notmatch 'ServerRemoteHost') -and
-                     -not [Console]::IsInputRedirected
-    } catch {
-        $canPrompt = $false
-    }
-    
-    if (-not $canPrompt) {
-        # Running non-interactively (e.g., from NSIS) without -Force
-        Write-Log "ERROR: Cannot run uninstaller without -Force flag in non-interactive mode" -Level ERROR
-        Write-Log " " -Level ERROR
-        Write-Log "The uninstaller must be run with the -Force parameter when executed" -Level ERROR
-        Write-Log "from scripts, scheduled tasks, or installers (like NSIS)." -Level ERROR
-        Write-Log " " -Level ERROR
-        Write-Log "Examples:" -Level INFO
-        Write-Log "  Interactive (with confirmation): .\uninstall.ps1" -Level INFO
-        Write-Log "  Non-interactive (no prompts):    .\uninstall.ps1 -Force" -Level INFO
-        Write-Log "  Silent mode:                     .\uninstall.ps1 -Force -Silent" -Level INFO
-        exit 1
-    }
-    
-    # Interactive mode - show warning and prompt
-    Write-LogHeader "Phase 2: Confirmation Required"
-    
-    Write-Log " " -Level WARN
-    Write-Log "⚠️  WARNING: Uninstalling Visual C++ Redistributables may break applications!" -Level WARN
-    Write-Log " " -Level WARN
-    Write-Log "Applications that depend on these runtimes will stop working." -Level WARN
-    Write-Log "Only proceed if you know what you're doing." -Level WARN
-    Write-Log " " -Level WARN
-    
-    $confirmation = Read-Host "Type 'UNINSTALL' to proceed or anything else to cancel"
-    
-    if ($confirmation -ne "UNINSTALL") {
-        Write-Log "Uninstallation cancelled by user" -Level INFO
-        exit 0
-    }
-} elseif ($Force) {
-    Write-Log "Running with -Force flag: Skipping confirmation" -Level WARN
-}
+# SAFETY CHECK REMOVED COMPLETELY - NSIS handles confirmation
 
 # Phase 3: Uninstallation
 Write-LogHeader "Phase 3: Uninstalling Packages"
