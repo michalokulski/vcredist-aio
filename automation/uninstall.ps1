@@ -1,4 +1,5 @@
-﻿<#
+﻿
+<#
 .SYNOPSIS
     VCRedist AIO Uninstaller - Removes Microsoft Visual C++ Redistributables
 .DESCRIPTION
@@ -25,17 +26,21 @@
 
 param(
     [Parameter(Mandatory = $false)]
-    [switch] $Force = $false,
+    [switch] $Force,
     
     [Parameter(Mandatory = $false)]
     [string] $LogDir,
     
     [Parameter(Mandatory = $false)]
-    [switch] $Silent = $false,
+    [switch] $Silent,
     
     [Parameter(Mandatory = $false)]
-    [switch] $WhatIf = $false
+    [switch] $WhatIf,
+    # By default, hide uninstaller windows for all packages. Use -ShowUninstallerWindows to opt-in to visible UI.
+    [Parameter(Mandatory = $false)]
+    [switch] $ShowUninstallerWindows
 )
+
 
 $ErrorActionPreference = "Continue"
 $WarningPreference = "Continue"
@@ -192,16 +197,15 @@ function Get-InstalledVCRedist {
                         "x64"
                     }
                     
-                    $package = @{
-                        DisplayName = $displayName
-                        DisplayVersion = $item.DisplayVersion
-                        Publisher = $item.Publisher
-                        UninstallString = $item.UninstallString
-                        QuietUninstallString = $item.QuietUninstallString
-                        PSChildName = $item.PSChildName
-                        Architecture = $arch
-                        InstallDate = $item.InstallDate
-                    }
+                    $package = @{}
+                    if (-not $package.ContainsKey('DisplayName')) { $package['DisplayName'] = $displayName }
+                    if (-not $package.ContainsKey('DisplayVersion')) { $package['DisplayVersion'] = $item.DisplayVersion }
+                    if (-not $package.ContainsKey('Publisher')) { $package['Publisher'] = $item.Publisher }
+                    if (-not $package.ContainsKey('UninstallString')) { $package['UninstallString'] = $item.UninstallString }
+                    if (-not $package.ContainsKey('QuietUninstallString')) { $package['QuietUninstallString'] = $item.QuietUninstallString }
+                    if (-not $package.ContainsKey('PSChildName')) { $package['PSChildName'] = $item.PSChildName }
+                    if (-not $package.ContainsKey('Architecture')) { $package['Architecture'] = $arch }
+                    if (-not $package.ContainsKey('InstallDate')) { $package['InstallDate'] = $item.InstallDate }
                     
                     $vcRedistPackages += $package
                     Write-Log "  Found: $displayName ($($package.Architecture))" -Level DEBUG
@@ -213,22 +217,49 @@ function Get-InstalledVCRedist {
     }
     
     $totalRegistryEntries = $vcRedistPackages.Count
-    
-    # Deduplicate packages based on UninstallString (x86 packages appear in both registry hives on 64-bit systems)
-    $vcRedistPackages = $vcRedistPackages | Sort-Object -Property UninstallString -Unique
-    
+
+    # Separate packages with and without uninstall strings
+    $withUninstallString = $vcRedistPackages | Where-Object { -not [string]::IsNullOrWhiteSpace($_.UninstallString) }
+    $withoutUninstallString = $vcRedistPackages | Where-Object { [string]::IsNullOrWhiteSpace($_.UninstallString) }
+
+    # Deduplicate only those with non-empty uninstall strings
+    $dedupedWithUninstallString = @()
+    $seenUninstallStrings = @{}
+    foreach ($pkg in $withUninstallString) {
+        $uninstallStr = $pkg.UninstallString
+        if (-not $seenUninstallStrings.ContainsKey($uninstallStr)) {
+            $dedupedWithUninstallString += $pkg
+            $seenUninstallStrings[$uninstallStr] = $true
+        }
+    }
+
+    # Combine back for reporting and processing, force copy to avoid duplicate key error
+    $vcRedistPackages = @()
+    foreach ($pkg in $dedupedWithUninstallString + $withoutUninstallString) {
+        $vcRedistPackages += [hashtable]@{
+            DisplayName = $pkg.DisplayName
+            DisplayVersion = $pkg.DisplayVersion
+            Publisher = $pkg.Publisher
+            UninstallString = $pkg.UninstallString
+            QuietUninstallString = $pkg.QuietUninstallString
+            PSChildName = $pkg.PSChildName
+            Architecture = $pkg.Architecture
+            InstallDate = $pkg.InstallDate
+        }
+    }
+
     $uniquePackages = $vcRedistPackages.Count
     $duplicatesRemoved = $totalRegistryEntries - $uniquePackages
-    
-    # Sort by name and version (ensure we keep array even with 1 item)
-    $vcRedistPackages = @($vcRedistPackages | Sort-Object DisplayName, DisplayVersion)
-    
+
+    # Sort by name and version
+    $vcRedistPackages = $vcRedistPackages | Sort-Object DisplayName, DisplayVersion
+
     if ($duplicatesRemoved -gt 0) {
         Write-Log "Found $uniquePackages unique package(s) ($totalRegistryEntries registry entries, $duplicatesRemoved duplicates removed)" -Level SUCCESS
     } else {
         Write-Log "Found $uniquePackages Visual C++ package(s)" -Level SUCCESS
     }
-    
+
     # Force return as array to prevent single-item unwrapping
     return ,$vcRedistPackages
 }
@@ -322,7 +353,9 @@ function Uninstall-VCRedistPackage {
         
         Write-Log "  Executing: $executable $arguments" -Level DEBUG
         
-        $process = Start-Process -FilePath $executable -ArgumentList $arguments -Wait -PassThru -NoNewWindow
+        $windowStyle = if ($ShowUninstallerWindows) { 'Normal' } else { 'Hidden' }
+        Write-Log "  WindowStyle: $windowStyle" -Level DEBUG
+        $process = Start-Process -FilePath $executable -ArgumentList $arguments -Wait -PassThru -WindowStyle $windowStyle
         
         $duration = (Get-Date) - $startTime
         $exitCode = $process.ExitCode
@@ -421,9 +454,12 @@ if (-not $isAdmin) {
 }
 
 # Phase 1: Detection
+
 Write-LogHeader "Phase 1: Package Detection"
 
+# Classic robust idiom: assign directly, function always returns array
 $packages = Get-InstalledVCRedist
+Write-Log "Detected package count snapshot: $($packages.Count) [Type: $($packages.GetType().FullName)]" -Level DEBUG
 
 if ($packages.Count -eq 0) {
     Write-Log "No Visual C++ Redistributable packages found." -Level INFO

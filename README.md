@@ -357,6 +357,19 @@ This project is provided as-is for educational and automation purposes. Microsof
 
 ---
 
+## Roadmap / TODO
+
+- Smarter installation (skip already-installed components)
+   - Detect installed VC++ redistributables via registry (HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall and Wow6432Node).
+   - Match by product/year/architecture (or known product/upgrade codes) and skip execution when present.
+   - Log clear reason per package: "Already installed (skipped)" with detected version.
+   - Add `-ForceReinstall` switch to override and always run installers.
+   - Keep behavior consistent in NSIS and PowerShell flows.
+
+Contributions welcome; see Developer Guide for local testing.
+
+---
+
 ## Credits & Inspiration
 
 - **[abbodi1406](https://github.com/abbodi1406)** - Original creator of [VC++ Redistributables AIO](https://github.com/abbodi1406/vcredist), which inspired this project

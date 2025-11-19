@@ -27,7 +27,10 @@ param(
     
     [switch] $Silent = $false,
     
-    [switch] $SkipValidation = $false
+    [switch] $SkipValidation = $false,
+
+    # By default, hide installer windows for all packages. Use -ShowInstallerWindows to opt-in to visible UI.
+    [switch] $ShowInstallerWindows = $false
 )
 
 $ErrorActionPreference = "Continue"
@@ -152,6 +155,22 @@ function Write-Log {
     }
 }
 
+function Write-LogBlank {
+    param(
+        [switch] $NoConsole
+    )
+    try {
+        Add-Content -Path $script:LogFile -Value "" -ErrorAction Stop
+    } catch {
+        if (-not $Silent) {
+            Write-Host "[LOG ERROR] Failed to write blank line to log file: $($_.Exception.Message)" -ForegroundColor Red
+        }
+    }
+    if (-not $NoConsole -and -not $Silent) {
+        Write-Host ""
+    }
+}
+
 function Write-LogHeader {
     param([string] $Title)
     
@@ -183,6 +202,7 @@ function Write-SystemInfo {
         
         Write-Log "  PowerShell: $($PSVersionTable.PSVersion)" -Level INFO
         Write-Log "  Script Mode: $(if ($Silent) { 'Silent' } else { 'Interactive' })" -Level INFO
+        Write-Log "  Installer Windows: $(if ($ShowInstallerWindows) { 'Shown' } else { 'Hidden' })" -Level INFO
     } catch {
         Write-Log "Failed to retrieve system information: $($_.Exception.Message)" -Level DEBUG
     }
@@ -390,7 +410,7 @@ function Install-Package {
     # Determine install arguments based on package year
     # VCRedist 2005-2008 use different syntax than 2010+
     $installArgs = if ($Package.Year -le 2008) {
-        @("/q")  # Old syntax for 2005-2008
+        @("/Q")  # Old syntax for 2005-2008
     } else {
         @("/install", "/quiet", "/norestart")  # Modern syntax for 2010+
     }
@@ -400,7 +420,9 @@ function Install-Package {
         
         Write-Log "  Executing: $($Package.FilePath) $($installArgs -join ' ')" -Level DEBUG
         
-        $process = Start-Process -FilePath $Package.FilePath -ArgumentList $installArgs -Wait -PassThru -NoNewWindow
+        $windowStyle = if ($ShowInstallerWindows) { 'Normal' } else { 'Hidden' }
+        Write-Log "  WindowStyle: $windowStyle" -Level DEBUG
+        $process = Start-Process -FilePath $Package.FilePath -ArgumentList $installArgs -Wait -PassThru -WindowStyle $windowStyle
         
         $duration = (Get-Date) - $startTime
         $exitCode = $process.ExitCode
@@ -540,7 +562,7 @@ $totalPackages = $packages.Count
 foreach ($pkg in $packages) {
     $currentPackage++
     
-    Write-Log "" -Level INFO  # Blank line for readability
+    Write-LogBlank  # Blank line for readability
     Write-Log "Progress: [$currentPackage/$totalPackages] Installing package $currentPackage of $totalPackages" -Level INFO
     
     $result = Install-Package -Package $pkg
@@ -564,7 +586,7 @@ Write-Log "Failed: $failCount" -Level $(if ($failCount -gt 0) { 'WARN' } else { 
 Write-Log "Total duration: $([math]::Round($totalDuration.TotalSeconds, 2))s" -Level INFO
 
 if ($script:RebootRequired) {
-    Write-Log "" -Level INFO
+    Write-LogBlank
     Write-Log "[!] REBOOT REQUIRED - One or more packages require a system restart" -Level WARN
     Write-Log "Please restart your computer to complete the installation" -Level WARN
 }
