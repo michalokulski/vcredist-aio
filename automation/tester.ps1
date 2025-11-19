@@ -1,13 +1,13 @@
 # VCRedist AIO Installer Automated Test Script
+param(
+    [switch]$Auto
+)
+
 # Set these paths as needed
 $InstallerExe = "C:\Users\admin\Downloads\VC_Redist_AIO_Offline.exe"  # <-- Set to your actual built EXE
 $TestDir = "C:\VCRedistTest"
 $LogDir = "$TestDir\\logs"
 $ReportFile = "$TestDir\\test-report.txt"
-
-param(
-    [switch]$Auto
-)
 
 # Ensure test directories
 New-Item -ItemType Directory -Path $TestDir -Force | Out-Null
