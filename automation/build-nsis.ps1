@@ -140,6 +140,15 @@ $packages = $packagesJson.packages
 # Create output directory
 New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 
+# Normalize OutputDir to an absolute path to avoid relative path duplication later
+try {
+    $OutputDir = (Get-Item -Path $OutputDir -ErrorAction Stop).FullName
+    Write-Host "  Normalized OutputDir: $OutputDir" -ForegroundColor DarkGray
+} catch {
+    Write-Error "❌ Failed to resolve OutputDir to full path: $OutputDir. Error: $($_.Exception.Message)"
+    exit 1
+}
+
 # Create temporary download directory
 $downloadDir = Join-Path $OutputDir "downloads"
 New-Item -ItemType Directory -Path $downloadDir -Force | Out-Null
