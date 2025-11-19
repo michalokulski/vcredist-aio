@@ -176,37 +176,17 @@ Section "MainSection" SEC01
   
   DetailPrint "Extracting installation files..."
   
-  ; Extract installer script (UTF-8 encoding expected)
-  ${IfNot} ${FileExists} "$EXEDIR\install.ps1"
-    DetailPrint "ERROR: install.ps1 not found in EXE directory. Aborting."
-    MessageBox MB_ICONSTOP|MB_OK "Critical error: install.ps1 not found. The installer cannot continue."
-    Abort
-  ${EndIf}
+  ; Extract installer script (embedded in EXE during compilation)
   File "install.ps1"
   
-  ; Extract uninstaller script (UTF-8 encoding expected)
-  ${IfNot} ${FileExists} "$EXEDIR\uninstall.ps1"
-    DetailPrint "ERROR: uninstall.ps1 not found in EXE directory. Aborting."
-    MessageBox MB_ICONSTOP|MB_OK "Critical error: uninstall.ps1 not found. The installer cannot continue."
-    Abort
-  ${EndIf}
+  ; Extract uninstaller script (embedded in EXE during compilation)
   File "uninstall.ps1"
   
   ; Create packages directory
   CreateDirectory "$INSTDIR\packages"
   SetOutPath "$INSTDIR\packages"
   
-  ; Extract all packages
-  ; If any package file is missing, abort with error
-  !macro CHECK_PACKAGE_EXISTS FILE
-    ${IfNot} ${FileExists} "$EXEDIR\packages\${FILE}"
-      DetailPrint "ERROR: Package file missing: ${FILE}"
-      MessageBox MB_ICONSTOP|MB_OK "Critical error: Required package file missing: ${FILE}\nThe installer cannot continue."
-      Abort
-    ${EndIf}
-  !macroend
-
-  ; List of files to check
+  ; Extract all packages (embedded in EXE during compilation)
 {{FILE_LIST}}
   
   ; Check if extract-only mode
