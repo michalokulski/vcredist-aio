@@ -39,6 +39,12 @@ jobs:
             exit 1
           }
 
+      - name: Prepare dist directory with scripts
+        run: |
+          mkdir -p dist
+          cp automation/install.ps1 dist/
+          cp automation/uninstall.ps1 dist/
+
       - name: Build NSIS installer
         run: |
           pwsh -File automation/build-nsis.ps1 `
