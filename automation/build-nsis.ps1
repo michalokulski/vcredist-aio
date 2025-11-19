@@ -358,6 +358,43 @@ Get-ChildItem -Path $OutputDir -Recurse | ForEach-Object {
 
 # Read template
 
+# Ensure template path and nsis script path are set (provide sensible defaults)
+if (-not $templatePath) {
+    $templatePath = Join-Path $PSScriptRoot 'installer-template.nsi'
+    Write-Host "  Template path not set. Using default: $templatePath" -ForegroundColor DarkGray
+}
+
+if (-not $nsisScript) {
+    $nsisScript = Join-Path $OutputDir 'installer.nsi'
+    Write-Host "  NSIS script path not set. Using default: $nsisScript" -ForegroundColor DarkGray
+}
+
+# Derive product version from package list if not provided
+if (-not $productVersion) {
+    $verStrings = @()
+    if ($packages) { $verStrings = $packages | ForEach-Object { $_.version } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } }
+    $parsed = @()
+    foreach ($v in $verStrings) {
+        try {
+            $parsed += [version]$v
+        } catch {
+            # ignore non-parseable versions
+        }
+    }
+    if ($parsed.Count -gt 0) {
+        $productVersion = ($parsed | Sort-Object -Descending)[0].ToString()
+    } else {
+        $productVersion = (Get-Date -Format 'yyyy.MM.dd')
+    }
+    Write-Host "  Using product version: $productVersion" -ForegroundColor DarkGray
+}
+
+# Validate template exists and read it
+if (-not (Test-Path $templatePath)) {
+    Write-Error "❌ Template file not found: $templatePath"
+    exit 1
+}
+
 try {
     $templateContent = Get-Content -Path $templatePath -Raw -ErrorAction Stop
 } catch {
