@@ -58,6 +58,10 @@ if ($PackageFilter) {
     )
 }
 
+# Strip surrounding quotes from LogDir if present
+if ($LogDir -match '^("|)(.*)(\1)$') {
+    $LogDir = $Matches[2]
+}
 # Handle log directory - ONLY use custom path if explicitly specified
 if ([string]::IsNullOrWhiteSpace($LogDir)) {
     # No custom log directory - use TEMP as default

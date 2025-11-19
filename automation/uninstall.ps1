@@ -57,6 +57,10 @@ if ([string]::IsNullOrWhiteSpace($scriptDir)) {
     $scriptDir = Get-Location
 }
 
+# Strip surrounding quotes from LogDir if present
+if ($LogDir -match '^("|)(.*)(\1)$') {
+    $LogDir = $Matches[2]
+}
 # Handle log directory with proper fallback chain
 if ([string]::IsNullOrWhiteSpace($LogDir)) {
     # No custom log directory specified - use defaults
