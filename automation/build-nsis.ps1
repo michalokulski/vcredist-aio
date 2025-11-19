@@ -337,7 +337,7 @@ foreach ($file in $downloadedFiles) {
     }
 }
 if ($missingPackages.Count -gt 0) {
-    Write-Error "❌ Missing package files in $packagesSubDir:`n  $($missingPackages -join "`n  ")"
+    Write-Error "❌ Missing package files in ${packagesSubDir}:`n  $($missingPackages -join "`n  ")"
     exit 1
 }
 
