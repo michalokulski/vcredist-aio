@@ -171,10 +171,24 @@ foreach ($pkg in $packages) {
         continue
     }
 
+    # Sanitize filename: allow only alphanumerics, dash, underscore, and dot
+    $rawFileName = "$($pkg.id.Replace('.', '_'))_$($pkg.version).exe"
+    $fileName = $rawFileName -replace '[^A-Za-z0-9._-]', '_'
+    if ($fileName -ne $rawFileName) {
+        Write-Host "  Filename sanitized: $rawFileName -> $fileName" -ForegroundColor Yellow
+    }
+    if ($fileName.Length -gt 100) {
+        $fileName = $fileName.Substring(0, 100)
+        Write-Host "  Filename truncated to 100 chars: $fileName" -ForegroundColor Yellow
+    }
+    if ($fileName -match '^[.]+$' -or [string]::IsNullOrWhiteSpace($fileName)) {
+        Write-Warning "❌ Invalid filename generated for $($pkg.id). Skipping."
+        $failedDownloads += $pkg.id
+        continue
+    }
+
     $downloadResult = Invoke-WithRetry -Script {
-        $fileName = "$($pkg.id.Replace('.', '_'))_$($pkg.version).exe"
         $outputPath = Join-Path $downloadDir $fileName
-        
         Write-Host "    Downloading to: $fileName" -ForegroundColor DarkGray
         Invoke-WebRequest -Uri $installerInfo.Url -OutFile $outputPath -UseBasicParsing -ErrorAction Stop
         return $outputPath
@@ -203,7 +217,7 @@ foreach ($pkg in $packages) {
         $downloadedFiles += @{
             PackageId = $pkg.id
             FilePath = $downloadResult
-            FileName = Split-Path $downloadResult -Leaf
+            FileName = $fileName
         }
     } else {
         Write-Warning "⚠ Failed to download: $($pkg.id)"
@@ -267,9 +281,22 @@ if (-not $nsisPath) {
 }
 
 # Verify NSIS version
+
 try {
     $nsisVersion = & $nsisPath /VERSION 2>$null
     Write-Host "✔ NSIS found: $nsisPath (version: $nsisVersion)" -ForegroundColor Green
+    # Enforce minimum version 3.0
+    $verMatch = [regex]::Match($nsisVersion, '(\d+)\.(\d+)(?:\.(\d+))?')
+    if ($verMatch.Success) {
+        $major = [int]$verMatch.Groups[1].Value
+        $minor = [int]$verMatch.Groups[2].Value
+        if ($major -lt 3) {
+            Write-Error "❌ NSIS version $nsisVersion is too old. Version 3.0 or higher is required."
+            exit 1
+        }
+    } else {
+        Write-Warning "⚠ Could not parse NSIS version string: $nsisVersion. Proceeding, but build may fail."
+    }
 } catch {
     Write-Host "✔ NSIS found: $nsisPath" -ForegroundColor Green
 }
@@ -277,8 +304,19 @@ try {
 # Copy install.ps1 and uninstall.ps1 to output directory
 $installScriptPath = Join-Path $PSScriptRoot "install.ps1"
 $uninstallScriptPath = Join-Path $PSScriptRoot "uninstall.ps1"
-Copy-Item -Path $installScriptPath -Destination $OutputDir -Force
-Copy-Item -Path $uninstallScriptPath -Destination $OutputDir -Force
+
+# Ensure scripts are copied as UTF-8 (re-encode if needed)
+function Copy-AsUtf8 {
+    param(
+        [string]$Source,
+        [string]$Destination
+    )
+    $content = Get-Content -Path $Source -Raw
+    [System.IO.File]::WriteAllText($Destination, $content, [System.Text.Encoding]::UTF8)
+}
+
+Copy-AsUtf8 -Source $installScriptPath -Destination (Join-Path $OutputDir 'install.ps1')
+Copy-AsUtf8 -Source $uninstallScriptPath -Destination (Join-Path $OutputDir 'uninstall.ps1')
 
 # Get version from 2015+ x64 package
 $vcredist2015Plus = $packages | Where-Object { $_.id -eq "Microsoft.VCRedist.2015Plus.x64" }
@@ -298,7 +336,13 @@ if (-not (Test-Path $templatePath)) {
 }
 
 # Read template
-$templateContent = Get-Content -Path $templatePath -Raw
+
+try {
+    $templateContent = Get-Content -Path $templatePath -Raw -ErrorAction Stop
+} catch {
+    Write-Error "❌ Failed to read template file: $templatePath. Error: $($_.Exception.Message)"
+    exit 1
+}
 
 # Validate required placeholders exist
 if ($templateContent -notmatch '\{\{VERSION\}\}') {
@@ -325,7 +369,13 @@ $nsisContent = $templateContent -replace '{{VERSION}}', $productVersion
 $nsisContent = $nsisContent -replace '{{FILE_LIST}}', $fileList
 
 # Write NSIS script with ASCII encoding
-[System.IO.File]::WriteAllText($nsisScript, $nsisContent, [System.Text.Encoding]::ASCII)
+
+try {
+    [System.IO.File]::WriteAllText($nsisScript, $nsisContent, [System.Text.Encoding]::ASCII)
+} catch {
+    Write-Error "❌ Failed to write NSIS script: $nsisScript. Error: $($_.Exception.Message)"
+    exit 1
+}
 
 Write-Host "✔ NSIS script created" -ForegroundColor Green
 

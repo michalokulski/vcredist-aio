@@ -93,60 +93,76 @@ Function .onInit
   
   ; Get command line parameters
   ${GetParameters} $R0
-  
-  ; Check for /EXTRACT parameter
+
+  ; Validate and parse /EXTRACT parameter
   ClearErrors
   ${GetOptions} $R0 "/EXTRACT=" $R1
   ${IfNot} ${Errors}
     StrCpy $ExtractOnly "1"
-    ; Remove quotes from path if present
     Push $R1
     Call TrimQuotes
     Pop $R1
     StrCpy $INSTDIR $R1
+    ${If} $INSTDIR == ""
+      DetailPrint "ERROR: /EXTRACT parameter requires a path."
+      MessageBox MB_ICONSTOP|MB_OK "Invalid usage: /EXTRACT requires a path."
+      Abort
+    ${EndIf}
   ${EndIf}
-  
-  ; Check for /PACKAGES parameter
+
+  ; Validate and parse /PACKAGES parameter
   ClearErrors
   ${GetOptions} $R0 "/PACKAGES=" $R1
   ${IfNot} ${Errors}
-    ; Remove quotes from value if present
     Push $R1
     Call TrimQuotes
     Pop $R1
     StrCpy $PackageSelection $R1
+    ${If} $PackageSelection == ""
+      DetailPrint "ERROR: /PACKAGES parameter requires a value."
+      MessageBox MB_ICONSTOP|MB_OK "Invalid usage: /PACKAGES requires a value."
+      Abort
+    ${EndIf}
   ${EndIf}
-  
-  ; Check for /LOGFILE parameter
+
+  ; Validate and parse /LOGFILE parameter
   ClearErrors
   ${GetOptions} $R0 "/LOGFILE=" $R1
   ${IfNot} ${Errors}
-    ; Remove quotes from path if present
     Push $R1
     Call TrimQuotes
     Pop $R1
     StrCpy $LogFile $R1
+    ${If} $LogFile == ""
+      DetailPrint "ERROR: /LOGFILE parameter requires a path."
+      MessageBox MB_ICONSTOP|MB_OK "Invalid usage: /LOGFILE requires a path."
+      Abort
+    ${EndIf}
   ${EndIf}
 
-  ; New: Check for /LOGDIR parameter (preferred alias)
+  ; Validate and parse /LOGDIR parameter (preferred alias)
   ClearErrors
   ${GetOptions} $R0 "/LOGDIR=" $R1
   ${IfNot} ${Errors}
-    ; Remove quotes from path if present
     Push $R1
     Call TrimQuotes
     Pop $R1
     StrCpy $LogFile $R1
+    ${If} $LogFile == ""
+      DetailPrint "ERROR: /LOGDIR parameter requires a path."
+      MessageBox MB_ICONSTOP|MB_OK "Invalid usage: /LOGDIR requires a path."
+      Abort
+    ${EndIf}
   ${EndIf}
-  
-  ; Check for /SKIPVALIDATION parameter
+
+  ; Check for /SKIPVALIDATION parameter (no value required)
   ClearErrors
   ${GetOptions} $R0 "/SKIPVALIDATION" $R1
   ${IfNot} ${Errors}
     StrCpy $SkipValidation "1"
   ${EndIf}
-  
-  ; Check for /NOREBOOT parameter
+
+  ; Check for /NOREBOOT parameter (no value required)
   ClearErrors
   ${GetOptions} $R0 "/NOREBOOT" $R1
   ${IfNot} ${Errors}
@@ -160,10 +176,20 @@ Section "MainSection" SEC01
   
   DetailPrint "Extracting installation files..."
   
-  ; Extract installer script
+  ; Extract installer script (UTF-8 encoding expected)
+  ${IfNot} ${FileExists} "$EXEDIR\install.ps1"
+    DetailPrint "ERROR: install.ps1 not found in EXE directory. Aborting."
+    MessageBox MB_ICONSTOP|MB_OK "Critical error: install.ps1 not found. The installer cannot continue."
+    Abort
+  ${EndIf}
   File "install.ps1"
   
-  ; Extract uninstaller script
+  ; Extract uninstaller script (UTF-8 encoding expected)
+  ${IfNot} ${FileExists} "$EXEDIR\uninstall.ps1"
+    DetailPrint "ERROR: uninstall.ps1 not found in EXE directory. Aborting."
+    MessageBox MB_ICONSTOP|MB_OK "Critical error: uninstall.ps1 not found. The installer cannot continue."
+    Abort
+  ${EndIf}
   File "uninstall.ps1"
   
   ; Create packages directory
@@ -171,6 +197,16 @@ Section "MainSection" SEC01
   SetOutPath "$INSTDIR\packages"
   
   ; Extract all packages
+  ; If any package file is missing, abort with error
+  !macro CHECK_PACKAGE_EXISTS FILE
+    ${IfNot} ${FileExists} "$EXEDIR\packages\${FILE}"
+      DetailPrint "ERROR: Package file missing: ${FILE}"
+      MessageBox MB_ICONSTOP|MB_OK "Critical error: Required package file missing: ${FILE}\nThe installer cannot continue."
+      Abort
+    ${EndIf}
+  !macroend
+
+  ; List of files to check
 {{FILE_LIST}}
   
   ; Check if extract-only mode
