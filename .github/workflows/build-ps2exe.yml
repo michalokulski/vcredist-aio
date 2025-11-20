@@ -70,6 +70,19 @@ jobs:
           Write-Host "Contents of build-ps2exe.ps1:"
           Get-Content ./automation/build-ps2exe.ps1 -Head 20
 
+      - name: Fail-fast: verify required build inputs
+        shell: pwsh
+        run: |
+          Write-Host "Checking required files for build..."
+          $required = @("automation/build-ps2exe.ps1","automation/install.ps1","automation/uninstall.ps1","packages.json")
+          $missing = @()
+          foreach ($r in $required) { if (-not (Test-Path $r)) { $missing += $r } }
+          if ($missing.Count -gt 0) {
+            Write-Error "Missing required files: $($missing -join ', ')"
+            exit 1
+          }
+          Write-Host "All required files present"
+
       - name: Build EXE using PS2EXE
         shell: pwsh
         run: |

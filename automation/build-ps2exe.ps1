@@ -329,25 +329,45 @@ New-Item $stage -ItemType Directory | Out-Null
 
 Write-Host "Locating source scripts and packages..."
 
-# Find install/uninstall from several candidate locations
-# Build explicit child paths to avoid passing arrays into Join-Path
-$installCandidates = @(
-    (Join-Path -Path $root -ChildPath 'automation\install.ps1'),
-    (Join-Path -Path $root -ChildPath 'install.ps1')
-) | Where-Object { Test-Path $_ }
+# Find install/uninstall from several candidate locations and resolve to absolute paths.
+# Use Resolve-Path to guarantee full-path strings (prevents erroneous array/relative results).
+$installCandidatePaths = @(
+    Join-Path -Path $root -ChildPath 'automation\install.ps1',
+    Join-Path -Path $root -ChildPath 'install.ps1'
+)
 
-$uninstallCandidates = @(
-    (Join-Path -Path $root -ChildPath 'automation\uninstall.ps1'),
-    (Join-Path -Path $root -ChildPath 'uninstall.ps1')
-) | Where-Object { Test-Path $_ }
+$uninstallCandidatePaths = @(
+    Join-Path -Path $root -ChildPath 'automation\uninstall.ps1',
+    Join-Path -Path $root -ChildPath 'uninstall.ps1'
+)
+
+$installCandidates = @()
+foreach ($p in $installCandidatePaths) {
+    if (Test-Path $p) {
+        try { $installCandidates += (Resolve-Path $p -ErrorAction Stop).Path } catch { }
+    }
+}
+
+$uninstallCandidates = @()
+foreach ($p in $uninstallCandidatePaths) {
+    if (Test-Path $p) {
+        try { $uninstallCandidates += (Resolve-Path $p -ErrorAction Stop).Path } catch { }
+    }
+}
 
 if ($installCandidates.Count -eq 0 -or $uninstallCandidates.Count -eq 0) {
     Write-Error "❌ Could not find install.ps1 or uninstall.ps1 in expected locations."
+    Write-Host "  Searched: $($installCandidatePaths -join ', ')" -ForegroundColor DarkGray
+    Write-Host "  Searched: $($uninstallCandidatePaths -join ', ')" -ForegroundColor DarkGray
     exit 1
 }
 
 $installSource = $installCandidates[0]
 $uninstallSource = $uninstallCandidates[0]
+
+# Debug: print resolved source paths to aid CI troubleshooting
+Write-Host "Resolved installSource: $installSource" -ForegroundColor Yellow
+Write-Host "Resolved uninstallSource: $uninstallSource" -ForegroundColor Yellow
 
 # Find packages directory (try repo packages/, dist/packages, automation/packages)
 
