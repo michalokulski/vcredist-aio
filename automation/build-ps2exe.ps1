@@ -24,9 +24,9 @@ $ErrorActionPreference = "Stop"
 Write-Host "== VC Redist AIO – PS2EXE Builder (embed payload) ==" -ForegroundColor Cyan
 Write-Host "Output: $Output"
 
-$root  = (Get-Item (Resolve-Path "$PSScriptRoot\..")).FullName
-$auto  = Join-Path $root "automation"
-$stage = Join-Path $auto "stage-ps2exe"
+$root  = Resolve-Path -Path (Join-Path $PSScriptRoot '..') -ErrorAction Stop | Select-Object -First 1 -ExpandProperty Path
+$auto  = Join-Path $root 'automation'
+$stage = Join-Path $auto 'stage-ps2exe'
 
 # Clean stage
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
@@ -36,15 +36,15 @@ Write-Host "Locating source scripts and packages..." -ForegroundColor Yellow
 
 # Find install/uninstall from several candidate locations
 $installCandidates = @(
-    Join-Path $root "runtime\install.ps1",
-    Join-Path $auto "install.ps1",
-    Join-Path $root "install.ps1"
+    Join-Path (Join-Path $root 'runtime') 'install.ps1',
+    Join-Path $auto 'install.ps1',
+    Join-Path $root 'install.ps1'
 ) | Where-Object { Test-Path $_ }
 
 $uninstallCandidates = @(
-    Join-Path $root "runtime\uninstall.ps1",
-    Join-Path $auto "uninstall.ps1",
-    Join-Path $root "uninstall.ps1"
+    Join-Path (Join-Path $root 'runtime') 'uninstall.ps1',
+    Join-Path $auto 'uninstall.ps1',
+    Join-Path $root 'uninstall.ps1'
 ) | Where-Object { Test-Path $_ }
 
 if ($installCandidates.Count -eq 0 -or $uninstallCandidates.Count -eq 0) {
@@ -56,10 +56,11 @@ $installSource   = $installCandidates[0]
 $uninstallSource = $uninstallCandidates[0]
 
 # Find packages directory (try repo packages/, dist/packages, automation/packages)
+
 $pkgCandidates = @(
-    Join-Path $root "packages",
-    Join-Path $root "dist\packages",
-    Join-Path $auto "packages"
+    Join-Path $root 'packages',
+    Join-Path (Join-Path $root 'dist') 'packages',
+    Join-Path $auto 'packages'
 )
 
 $packagesDir = $pkgCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
