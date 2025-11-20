@@ -24,9 +24,10 @@ $ErrorActionPreference = "Stop"
 Write-Host "== VC Redist AIO – PS2EXE Builder (embed payload) ==" -ForegroundColor Cyan
 Write-Host "Output: $Output"
 
-$root  = Resolve-Path -Path (Join-Path $PSScriptRoot '..') -ErrorAction Stop | Select-Object -First 1 -ExpandProperty Path
-$auto  = Join-Path $root 'automation'
-$stage = Join-Path $auto 'stage-ps2exe'
+# Simplify and normalize all Join-Path calls to avoid nested or invalid paths
+$root  = (Resolve-Path "$PSScriptRoot\.." -ErrorAction Stop).Path
+$auto  = Join-Path -Path $root -ChildPath 'automation'
+$stage = Join-Path -Path $auto -ChildPath 'stage-ps2exe'
 
 # Clean stage
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
@@ -36,15 +37,15 @@ Write-Host "Locating source scripts and packages..." -ForegroundColor Yellow
 
 # Find install/uninstall from several candidate locations
 $installCandidates = @(
-    Join-Path (Join-Path $root 'runtime') 'install.ps1',
-    Join-Path $auto 'install.ps1',
-    Join-Path $root 'install.ps1'
+    Join-Path -Path $root -ChildPath 'runtime/install.ps1',
+    Join-Path -Path $auto -ChildPath 'install.ps1',
+    Join-Path -Path $root -ChildPath 'install.ps1'
 ) | Where-Object { Test-Path $_ }
 
 $uninstallCandidates = @(
-    Join-Path (Join-Path $root 'runtime') 'uninstall.ps1',
-    Join-Path $auto 'uninstall.ps1',
-    Join-Path $root 'uninstall.ps1'
+    Join-Path -Path $root -ChildPath 'runtime/uninstall.ps1',
+    Join-Path -Path $auto -ChildPath 'uninstall.ps1',
+    Join-Path -Path $root -ChildPath 'uninstall.ps1'
 ) | Where-Object { Test-Path $_ }
 
 if ($installCandidates.Count -eq 0 -or $uninstallCandidates.Count -eq 0) {
@@ -58,10 +59,10 @@ $uninstallSource = $uninstallCandidates[0]
 # Find packages directory (try repo packages/, dist/packages, automation/packages)
 
 $pkgCandidates = @(
-    Join-Path $root 'packages',
-    Join-Path (Join-Path $root 'dist') 'packages',
-    Join-Path $auto 'packages'
-)
+    Join-Path -Path $root -ChildPath 'packages',
+    Join-Path -Path $root -ChildPath 'dist/packages',
+    Join-Path -Path $auto -ChildPath 'packages'
+) | Where-Object { Test-Path $_ }
 
 $packagesDir = $pkgCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 
