@@ -75,13 +75,81 @@ jobs:
           Write-Host "exe_path=$exePath" >> $env:GITHUB_OUTPUT
           Write-Host "Computed EXE metadata: SHA256=$hash, Size=${sizeMB}MB"
 
-      - name: Upload SHA256SUMS.txt as artifact
+      - name: Create ZIP package (standalone script)
         if: steps.compute-metadata.outputs.noexe != '1'
-        uses: actions/upload-artifact@v4
-        with:
-          name: SHA256SUMS
-          path: dist/SHA256SUMS.txt
-          if-no-files-found: error
+        shell: pwsh
+        run: |
+          if (Test-Path 'release-package') { Remove-Item -Path 'release-package' -Recurse -Force }
+          $releaseDir = 'release-package'
+          $packagesDir = Join-Path $releaseDir 'packages'
+          New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
+          New-Item -ItemType Directory -Path $packagesDir -Force | Out-Null
+          Copy-Item -Path 'dist/packages/*' -Destination $packagesDir -Force
+          Copy-Item -Path 'automation/install.ps1' -Destination $releaseDir -Force
+          Copy-Item -Path 'automation/uninstall.ps1' -Destination $releaseDir -Force
+          $readme = @"
+          VCRedist AIO Offline Installer
+
+          Extract this archive and run `install.ps1` as Administrator.
+          "@
+          $readme | Out-File (Join-Path $releaseDir 'README.txt') -Encoding UTF8
+          New-Item -ItemType Directory -Path artifact -Force | Out-Null
+          Compress-Archive -Path "$releaseDir/*" -DestinationPath 'artifact/vc_redist_aio_offline.zip' -CompressionLevel Optimal -Force
+          Write-Host "✔ ZIP package created: artifact/vc_redist_aio_offline.zip"
+
+      - name: Compute SHA256 for all assets
+        if: steps.compute-metadata.outputs.noexe != '1'
+        id: compute-sha
+        shell: pwsh
+        run: |
+          $exeFile = 'dist/vcredist-aio.exe'
+          $zipFile = 'artifact/vc_redist_aio_offline.zip'
+          $exeSha = (Get-FileHash -Algorithm SHA256 $exeFile).Hash
+          $zipSha = (Get-FileHash -Algorithm SHA256 $zipFile).Hash
+          Write-Host "EXE SHA256: $exeSha"
+          Write-Host "ZIP SHA256: $zipSha"
+          $exeSize = [math]::Round((Get-Item $exeFile).Length / 1MB, 2)
+          $zipSize = [math]::Round((Get-Item $zipFile).Length / 1MB, 2)
+          $checksumContent = @"
+          $exeSha  VC_Redist_AIO_Offline.exe
+          $zipSha  vc_redist_aio_offline.zip
+          "@
+          New-Item -ItemType Directory -Path artifact -Force | Out-Null
+          $checksumContent | Out-File 'artifact/SHA256SUMS.txt' -Encoding ASCII -Force
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "exe_sha=$exeSha"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "zip_sha=$zipSha"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "exe_size=$exeSize"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "zip_size=$zipSize"
+
+      - name: Extract version for release name
+        id: get-version
+        shell: pwsh
+        run: |
+          $packagesJson = Get-Content packages.json -Raw | ConvertFrom-Json
+          $vcredist2015Plus = $packagesJson.packages | Where-Object { $_.id -eq "Microsoft.VCRedist.2015Plus.x64" }
+          if ($vcredist2015Plus -and $vcredist2015Plus.version) {
+            $version = $vcredist2015Plus.version
+            Write-Host "Found version: $version"
+            Add-Content -Path $env:GITHUB_OUTPUT -Value "version=$version"
+            Add-Content -Path $env:GITHUB_OUTPUT -Value "release_name=VCRedist AIO $version"
+          } else {
+            Write-Error "Could not find Microsoft.VCRedist.2015Plus.x64 version"
+            exit 1
+          }
+
+      - name: Generate release notes
+        id: release-notes
+        shell: pwsh
+        run: |
+          $packagesJson = Get-Content packages.json -Raw | ConvertFrom-Json
+          $notes = "# VCRedist AIO Offline Installer`n`n"
+          $notes += "## Assets`n`n"
+          $notes += "- **VC_Redist_AIO_Offline.exe** | ${{ steps.compute-sha.outputs.exe_size }} MB | `$${{ steps.compute-sha.outputs.exe_sha }}``n"
+          $notes += "- **vc_redist_aio_offline.zip** | ${{ steps.compute-sha.outputs.zip_size }} MB | `$${{ steps.compute-sha.outputs.zip_sha }}``n`n"
+          $notes += "## Included Packages`n`n"
+          foreach ($pkg in $packagesJson.packages) { $notes += "- $($pkg.id) - $($pkg.version)`n" }
+          $notes | Out-File 'release-notes.md' -Encoding UTF8 -Force
+          Write-Host "Release notes generated"
 
       - name: Upload EXE and checksum bundle
         if: steps.compute-metadata.outputs.noexe != '1'
@@ -90,26 +158,24 @@ jobs:
           name: vcredist-aio
           path: |
             dist/vcredist-aio.exe
-            dist/SHA256.txt
+            artifact/SHA256SUMS.txt
           if-no-files-found: error
 
-      - name: Create Release (with EXE metadata)
+      - name: Create Release
         if: steps.compute-metadata.outputs.noexe != '1'
         uses: softprops/action-gh-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          # Use only numeric run identifiers to ensure a well-formed tag name
-          tag_name: vcredist-aio-${{ github.run_number }}-${{ github.run_id }}
-          name: VCRedist AIO run ${{ github.run_number }} (id ${{ github.run_id }})
+          tag_name: v${{ steps.get-version.outputs.version }}
+          name: ${{ steps.get-version.outputs.release_name }}
+          body_path: release-notes.md
           files: |
             dist/vcredist-aio.exe
-            dist/SHA256SUMS.txt
-          body: |
-            ## VCRedist AIO Offline EXE
-            - File: dist/vcredist-aio.exe
-            - SHA256: ${{ steps.compute-metadata.outputs.exe_sha }}
-            - Size: ${{ steps.compute-metadata.outputs.exe_size_mb }} MB
+            artifact/vc_redist_aio_offline.zip
+            artifact/SHA256SUMS.txt
+          draft: false
+          prerelease: false
 
       - name: Final status
         shell: pwsh
