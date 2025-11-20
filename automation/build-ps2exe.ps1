@@ -13,13 +13,13 @@
     Install-Module ps2exe
 #>
 
-[CmdletBinding()]
+# Ensure param block is correctly formatted and at the top of the script
 param(
-  [Parameter(Mandatory = $true)]
-  [string]$PackagesFile,
+    [Parameter(Mandatory = $true)]
+    [string]$PackagesFile,
 
-  [string]$Output = "vcredist-aio.exe",
-  [switch]$VerboseBuild
+    [string]$Output = "vcredist-aio.exe",
+    [switch]$VerboseBuild
 )
 
 $ErrorActionPreference = "Stop"

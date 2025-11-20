@@ -51,18 +51,20 @@ jobs:
           $packagesFile = (Resolve-Path ./packages.json).Path
           Write-Host "Resolved packages.json path: $packagesFile"
 
-    #   - name: Prepare packages
-    #     shell: pwsh
-    #     run: |
-    #       Write-Host "Preparing packages using build-nsis.ps1..."
-    #       ./automation/build-nsis.ps1 -PackagesFile packages.json -OutputDir dist
+      - name: Debug PowerShell Context
+        shell: pwsh
+        run: |
+          Write-Host "PowerShell Version:"
+          $PSVersionTable
+          Write-Host "Current Directory:"
+          Get-Location
 
       - name: Build EXE using PS2EXE
         shell: pwsh
         run: |
           Write-Host "Running PS2EXE build script..."
           $packagesFile = (Resolve-Path ./packages.json).Path
-          ./automation/build-ps2exe.ps1 -PackagesFile $packagesFile -VerboseBuild
+          pwsh -File ./automation/build-ps2exe.ps1 -PackagesFile $packagesFile -VerboseBuild
 
       - name: Validate build artifacts
         shell: pwsh
