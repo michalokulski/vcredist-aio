@@ -330,14 +330,15 @@ New-Item $stage -ItemType Directory | Out-Null
 Write-Host "Locating source scripts and packages..."
 
 # Find install/uninstall from several candidate locations
+# Build explicit child paths to avoid passing arrays into Join-Path
 $installCandidates = @(
-    Join-Path $root "automation/install.ps1",
-    Join-Path $root "install.ps1"
+    (Join-Path -Path $root -ChildPath 'automation\install.ps1'),
+    (Join-Path -Path $root -ChildPath 'install.ps1')
 ) | Where-Object { Test-Path $_ }
 
 $uninstallCandidates = @(
-    Join-Path $root "automation/uninstall.ps1",
-    Join-Path $root "uninstall.ps1"
+    (Join-Path -Path $root -ChildPath 'automation\uninstall.ps1'),
+    (Join-Path -Path $root -ChildPath 'uninstall.ps1')
 ) | Where-Object { Test-Path $_ }
 
 if ($installCandidates.Count -eq 0 -or $uninstallCandidates.Count -eq 0) {

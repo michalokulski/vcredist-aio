@@ -1,5 +1,8 @@
 name: Build PS2EXE Installer
 
+permissions:
+  contents: write
+
 on:
   push:
     branches: [ main ]
@@ -132,8 +135,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: vcredist-aio-${{ steps.compute-metadata.outputs.exe_sha_short }}
-          name: VCRedist AIO ${{ steps.compute-metadata.outputs.exe_sha_short }}
+          # Prefer computed short SHA, fallback to run number when empty
+          tag_name: vcredist-aio-${{ steps.compute-metadata.outputs.exe_sha_short || github.run_number }}
+          name: VCRedist AIO ${{ steps.compute-metadata.outputs.exe_sha_short || github.run_number }}
           files: |
             dist/vcredist-aio.exe
             dist/SHA256SUMS.txt
