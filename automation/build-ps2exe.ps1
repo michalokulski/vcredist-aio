@@ -136,18 +136,18 @@ $bootstrapBuilder.AppendLine("") | Out-Null
 $bootstrapBuilder.AppendLine("# Choose script to run") | Out-Null
 $bootstrapBuilder.AppendLine("$script = if ($Uninstall) { Join-Path $extractRoot 'uninstall.ps1' } else { Join-Path $extractRoot 'install.ps1' }") | Out-Null
 $bootstrapBuilder.AppendLine("") | Out-Null
-$bootstrapBuilder.AppendLine("# Build argument list") | Out-Null
-$bootstrapBuilder.AppendLine("$argsList = @()") | Out-Null
-$bootstrapBuilder.AppendLine("if ($Silent) { $argsList += '-Silent' }") | Out-Null
-$bootstrapBuilder.AppendLine("if ($Packages) { $argsList += \"-PackageFilter `\"$Packages`\"\" }") | Out-Null
-$bootstrapBuilder.AppendLine("if ($LogDir) { $argsList += \"-LogDir `\"$LogDir`\"\" }") | Out-Null
-$bootstrapBuilder.AppendLine("if ($SkipValidation) { $argsList += '-SkipValidation' }") | Out-Null
-$bootstrapBuilder.AppendLine("if ($NoReboot) { $argsList += '-NoReboot' }") | Out-Null
-$bootstrapBuilder.AppendLine("") | Out-Null
-$bootstrapBuilder.AppendLine("Write-Host \"Running script: $script\"") | Out-Null
-$bootstrapBuilder.AppendLine("Write-Host \"Arguments: $argsList\"") | Out-Null
-$bootstrapBuilder.AppendLine("powershell.exe -ExecutionPolicy Bypass -NoProfile -File $script @argsList") | Out-Null
-$bootstrapBuilder.AppendLine("exit $LASTEXITCODE") | Out-Null
+$bootstrapBuilder.AppendLine('# Build argument list') | Out-Null
+$bootstrapBuilder.AppendLine('$argsList = @()') | Out-Null
+$bootstrapBuilder.AppendLine('if ($Silent) { $argsList += ''-Silent'' }') | Out-Null
+$bootstrapBuilder.AppendLine('if ($Packages) { $argsList += "-PackageFilter `"$Packages`"" }') | Out-Null
+$bootstrapBuilder.AppendLine('if ($LogDir) { $argsList += "-LogDir `"$LogDir`"" }') | Out-Null
+$bootstrapBuilder.AppendLine('if ($SkipValidation) { $argsList += ''-SkipValidation'' }') | Out-Null
+$bootstrapBuilder.AppendLine('if ($NoReboot) { $argsList += ''-NoReboot'' }') | Out-Null
+$bootstrapBuilder.AppendLine('') | Out-Null
+$bootstrapBuilder.AppendLine('Write-Host "Running script: $script"') | Out-Null
+$bootstrapBuilder.AppendLine('Write-Host "Arguments: $argsList"') | Out-Null
+$bootstrapBuilder.AppendLine('powershell.exe -ExecutionPolicy Bypass -NoProfile -File $script @argsList') | Out-Null
+$bootstrapBuilder.AppendLine('exit $LASTEXITCODE') | Out-Null
 
 $bootstrap = $bootstrapBuilder.ToString()
 
