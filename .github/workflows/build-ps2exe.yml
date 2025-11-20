@@ -22,12 +22,12 @@ jobs:
         run: |
           Install-Module ps2exe -Scope CurrentUser -Force
 
-      - name: Prepare packages (build-nsis)
-        shell: pwsh
-        run: |
-          Write-Host "Preparing packages using build-nsis.ps1..."
-          # build-nsis.ps1 will download required runtime packages into the repo (dist/packages or packages)
-          ./automation/build-nsis.ps1
+    #   - name: Prepare packages (build-nsis)
+    #     shell: pwsh
+    #     run: |
+    #       Write-Host "Preparing packages using build-nsis.ps1..."
+    #       # build-nsis.ps1 will download required runtime packages into the repo (dist/packages or packages)
+    #       ./automation/build-nsis.ps1
 
       - name: Build EXE using PS2EXE
         shell: pwsh
