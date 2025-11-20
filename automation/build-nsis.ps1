@@ -311,9 +311,17 @@ try {
 }
 
 # Copy install.ps1 and uninstall.ps1 to output directory
+# Pre-build check: fail if install.ps1 or uninstall.ps1 are missing
 $installScriptPath = Join-Path $PSScriptRoot "install.ps1"
 $uninstallScriptPath = Join-Path $PSScriptRoot "uninstall.ps1"
-
+if (!(Test-Path $installScriptPath)) {
+    Write-Error "❌ Required file missing: $installScriptPath. Ensure install.ps1 is present before building."
+    exit 1
+}
+if (!(Test-Path $uninstallScriptPath)) {
+    Write-Error "❌ Required file missing: $uninstallScriptPath. Ensure uninstall.ps1 is present before building."
+    exit 1
+}
 # Ensure scripts are copied as UTF-8 (re-encode if needed)
 function Copy-AsUtf8 {
     param(
@@ -323,7 +331,6 @@ function Copy-AsUtf8 {
     $content = Get-Content -Path $Source -Raw
     [System.IO.File]::WriteAllText($Destination, $content, [System.Text.Encoding]::UTF8)
 }
-
 Copy-AsUtf8 -Source $installScriptPath -Destination (Join-Path $OutputDir 'install.ps1')
 Copy-AsUtf8 -Source $uninstallScriptPath -Destination (Join-Path $OutputDir 'uninstall.ps1')
 
