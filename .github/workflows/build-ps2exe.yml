@@ -59,12 +59,17 @@ jobs:
           Write-Host "Current Directory:"
           Get-Location
 
+      - name: Debug build-ps2exe.ps1
+        shell: pwsh
+        run: |
+          Write-Host "Contents of build-ps2exe.ps1:"
+          Get-Content ./automation/build-ps2exe.ps1 -Head 20
+
       - name: Build EXE using PS2EXE
         shell: pwsh
         run: |
           Write-Host "Running PS2EXE build script..."
-          $packagesFile = (Resolve-Path ./packages.json).Path
-          pwsh -File ./automation/build-ps2exe.ps1 -PackagesFile $packagesFile -VerboseBuild
+          pwsh -File ./automation/build-ps2exe.ps1 -PackagesFile ./packages.json -VerboseBuild
 
       - name: Validate build artifacts
         shell: pwsh

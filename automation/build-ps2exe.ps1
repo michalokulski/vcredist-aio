@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Build VC Redist AIO into a single EXE using PS2EXE (embed payload).
 
@@ -13,7 +13,7 @@
     Install-Module ps2exe
 #>
 
-# Ensure param block is correctly formatted and at the top of the script
+# Ensure the script is saved with UTF-8 encoding and validate the param block
 param(
     [Parameter(Mandatory = $true)]
     [string]$PackagesFile,
