@@ -147,9 +147,9 @@ if (-not (Get-Command ps2exe -ErrorAction SilentlyContinue)) {
     exit 1
 }
 
-# Validate PackagesFile parameter
+# Improved error handling for missing PackagesFile
 if (-not (Test-Path $PackagesFile)) {
-    Write-Error "❌ Packages file not found: $PackagesFile"
+    Write-Error "❌ Packages file not found: $PackagesFile. Ensure it exists and is passed correctly."
     exit 1
 }
 

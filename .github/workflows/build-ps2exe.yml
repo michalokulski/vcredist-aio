@@ -31,6 +31,20 @@ jobs:
             exit 1
           }
 
+      - name: Ensure packages.json is present
+        shell: pwsh
+        run: |
+          if (-not (Test-Path ./packages.json)) {
+            Write-Error "packages.json is missing. Ensure it is committed to the repository."
+            exit 1
+          }
+
+      - name: Debug workspace
+        shell: pwsh
+        run: |
+          Write-Host "Current directory contents:"
+          Get-ChildItem -Recurse
+
     #   - name: Prepare packages
     #     shell: pwsh
     #     run: |
