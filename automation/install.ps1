@@ -1,4 +1,4 @@
-﻿. # Encoding: UTF-8
+﻿# Encoding: UTF-8
 <#
 .SYNOPSIS
     VCRedist AIO Offline Installer - Installation Engine

@@ -376,23 +376,23 @@ if ($VerboseBuild.IsPresent) { Write-Host "[debug] bootstrap will include $($pay
 
 $bootstrapBuilder = New-Object System.Text.StringBuilder
 
-$bootstrapBuilder.AppendLine("param(") | Out-Null
-$bootstrapBuilder.AppendLine("    [switch]`$Silent,") | Out-Null
-$bootstrapBuilder.AppendLine("    [string]`$Packages,") | Out-Null
-$bootstrapBuilder.AppendLine("    [string]`$LogDir,") | Out-Null
-$bootstrapBuilder.AppendLine("    [switch]`$SkipValidation,") | Out-Null
-$bootstrapBuilder.AppendLine("    [switch]`$NoReboot,") | Out-Null
-$bootstrapBuilder.AppendLine("    [switch]`$Uninstall") | Out-Null
-$bootstrapBuilder.AppendLine(")") | Out-Null
-$bootstrapBuilder.AppendLine("") | Out-Null
-$bootstrapBuilder.AppendLine("$ErrorActionPreference = 'Stop'") | Out-Null
+$bootstrapBuilder.AppendLine('param(') | Out-Null
+$bootstrapBuilder.AppendLine('    [switch]$Silent,') | Out-Null
+$bootstrapBuilder.AppendLine('    [string]$Packages,') | Out-Null
+$bootstrapBuilder.AppendLine('    [string]$LogDir,') | Out-Null
+$bootstrapBuilder.AppendLine('    [switch]$SkipValidation,') | Out-Null
+$bootstrapBuilder.AppendLine('    [switch]$NoReboot,') | Out-Null
+$bootstrapBuilder.AppendLine('    [switch]$Uninstall') | Out-Null
+$bootstrapBuilder.AppendLine(')') | Out-Null
+$bootstrapBuilder.AppendLine('') | Out-Null
+$bootstrapBuilder.AppendLine('$ErrorActionPreference = ''Stop''') | Out-Null
 $bootstrapBuilder.AppendLine("") | Out-Null
 $bootstrapBuilder.AppendLine('$extractRoot = Join-Path $env:TEMP ''vcredist-aio-runtime''') | Out-Null
 $bootstrapBuilder.AppendLine('if (Test-Path $extractRoot) { Remove-Item $extractRoot -Recurse -Force }') | Out-Null
 $bootstrapBuilder.AppendLine('New-Item $extractRoot -ItemType Directory | Out-Null') | Out-Null
 $bootstrapBuilder.AppendLine("") | Out-Null
 $bootstrapBuilder.AppendLine("# Embedded payload (Base64)") | Out-Null
-$bootstrapBuilder.AppendLine("$EmbeddedFiles = @{}") | Out-Null
+$bootstrapBuilder.AppendLine('$EmbeddedFiles = @{}') | Out-Null
 
 foreach ($p in $payloadFiles) {
   if (-not (Test-Path $p.Full)) { continue }
