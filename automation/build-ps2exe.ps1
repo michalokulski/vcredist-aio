@@ -21,7 +21,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-Write-Host "== VC Redist AIO – PS2EXE Builder (embed payload) ==" -ForegroundColor Cyan
+Write-Host "== VC Redist AIO – PS2EXE Builder (embed payload) =="
 Write-Host "Output: $Output"
 
 # Ensure all Join-Path inputs are explicitly strings to avoid array issues
@@ -33,7 +33,7 @@ $stage = [string](Join-Path -Path $auto -ChildPath 'stage-ps2exe')
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item $stage -ItemType Directory | Out-Null
 
-Write-Host "Locating source scripts and packages..." -ForegroundColor Yellow
+Write-Host "Locating source scripts and packages..."
 
 # Find install/uninstall from several candidate locations
 $installCandidates = @(
@@ -67,10 +67,10 @@ $pkgCandidates = @(
 $packagesDir = $pkgCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 
 if (-not $packagesDir) {
-  Write-Warning "No packages directory found. The EXE will not include package binaries." -ForegroundColor Yellow
+  Write-Warning "No packages directory found. The EXE will not include package binaries."
 }
 
-Write-Host "Staging and collecting payload files..." -ForegroundColor Yellow
+Write-Host "Staging and collecting payload files..."
 
 $payloadDir = Join-Path $stage "payload"
 New-Item $payloadDir -ItemType Directory | Out-Null
@@ -92,7 +92,7 @@ if ($packagesDir) {
   }
 }
 
-Write-Host "Encoding payload into bootstrap..." -ForegroundColor Yellow
+Write-Host "Encoding payload into bootstrap..."
 
 $bootstrapBuilder = New-Object System.Text.StringBuilder
 
@@ -132,7 +132,7 @@ $bootstrapBuilder.AppendLine('    $dir = Split-Path $outPath -Parent') | Out-Nul
 $bootstrapBuilder.AppendLine('    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }') | Out-Null
 $bootstrapBuilder.AppendLine('    $b = [Convert]::FromBase64String($EmbeddedFiles[$k])') | Out-Null
 $bootstrapBuilder.AppendLine('    [System.IO.File]::WriteAllBytes($outPath, $b)') | Out-Null
-$bootstrapBuilder.AppendLine('    Write-Host "  Wrote: $outPath" -ForegroundColor DarkGray') | Out-Null
+$bootstrapBuilder.AppendLine('    Write-Host "  Wrote: $outPath"') | Out-Null
 $bootstrapBuilder.AppendLine('}') | Out-Null
 $bootstrapBuilder.AppendLine("") | Out-Null
 $bootstrapBuilder.AppendLine("# Choose script to run") | Out-Null
@@ -158,7 +158,7 @@ $bootstrap | Out-File -FilePath $bootstrapFile -Encoding UTF8 -Force
 
 ### ---- RUN PS2EXE ----
 
-Write-Host "Building EXE (PS2EXE)..." -ForegroundColor Green
+Write-Host "Building EXE (PS2EXE)..."
 
 $iconPath = Join-Path $root "icon.ico"
 if (-not (Test-Path $iconPath)) { $iconPath = $null }
@@ -176,7 +176,7 @@ $cmd += "  -noConsole:$noConsole `n  -title `"VC Redist AIO`" `n  -description `
 
 Invoke-Expression $cmd
 
-Write-Host "Build complete. Output: $Output" -ForegroundColor Cyan
+Write-Host "Build complete. Output: $Output"
 
 ### ---- CLEAN UP ----
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
