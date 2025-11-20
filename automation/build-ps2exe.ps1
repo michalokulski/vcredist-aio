@@ -121,17 +121,17 @@ foreach ($p in $payloadFiles) {
     $bootstrapBuilder.AppendLine("'@") | Out-Null
 }
 
-$bootstrapBuilder.AppendLine("") | Out-Null
-$bootstrapBuilder.AppendLine("Write-Host 'Extracting embedded payload...'") | Out-Null
-$bootstrapBuilder.AppendLine("foreach (`$k in `$EmbeddedFiles.Keys) {") | Out-Null
-$bootstrapBuilder.AppendLine("    `$rel = `$k -replace '/', '\'" ) | Out-Null
-$bootstrapBuilder.AppendLine("    `$outPath = Join-Path `$extractRoot `$rel") | Out-Null
-$bootstrapBuilder.AppendLine("    `$dir = Split-Path `$outPath -Parent") | Out-Null
-$bootstrapBuilder.AppendLine("    if (-not (Test-Path `$dir)) { New-Item -ItemType Directory -Path `$dir -Force | Out-Null }") | Out-Null
-$bootstrapBuilder.AppendLine("    `$b = [Convert]::FromBase64String(`$EmbeddedFiles[`$k])") | Out-Null
-$bootstrapBuilder.AppendLine("    [System.IO.File]::WriteAllBytes(`$outPath, `$b)") | Out-Null
-$bootstrapBuilder.AppendLine("    Write-Host `\"  Wrote: `$outPath`\" -ForegroundColor DarkGray") | Out-Null
-$bootstrapBuilder.AppendLine("}") | Out-Null
+$bootstrapBuilder.AppendLine('') | Out-Null
+$bootstrapBuilder.AppendLine('Write-Host ''Extracting embedded payload...''') | Out-Null
+$bootstrapBuilder.AppendLine('foreach ($k in $EmbeddedFiles.Keys) {') | Out-Null
+$bootstrapBuilder.AppendLine('    $rel = $k -replace ''/'', ''\''') | Out-Null
+$bootstrapBuilder.AppendLine('    $outPath = Join-Path $extractRoot $rel') | Out-Null
+$bootstrapBuilder.AppendLine('    $dir = Split-Path $outPath -Parent') | Out-Null
+$bootstrapBuilder.AppendLine('    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }') | Out-Null
+$bootstrapBuilder.AppendLine('    $b = [Convert]::FromBase64String($EmbeddedFiles[$k])') | Out-Null
+$bootstrapBuilder.AppendLine('    [System.IO.File]::WriteAllBytes($outPath, $b)') | Out-Null
+$bootstrapBuilder.AppendLine('    Write-Host "  Wrote: $outPath" -ForegroundColor DarkGray') | Out-Null
+$bootstrapBuilder.AppendLine('}') | Out-Null
 $bootstrapBuilder.AppendLine("") | Out-Null
 $bootstrapBuilder.AppendLine("# Choose script to run") | Out-Null
 $bootstrapBuilder.AppendLine("$script = if ($Uninstall) { Join-Path $extractRoot 'uninstall.ps1' } else { Join-Path $extractRoot 'install.ps1' }") | Out-Null
