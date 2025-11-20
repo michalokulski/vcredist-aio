@@ -479,8 +479,40 @@ try {
 }
 
 # Validate output file after build
-if (-not (Test-Path $Output)) {
-    Write-Error "❌ Build failed. Output file not found: $Output"
+## Locate output EXE (prefer OutputDir) and validate
+$outputCandidates = @()
+$outputCandidates += (Join-Path $OutputDir $Output)
+try { $resolved = (Resolve-Path $Output -ErrorAction SilentlyContinue).Path; if ($resolved) { $outputCandidates += $resolved } } catch {}
+
+$exePath = $null
+foreach ($c in $outputCandidates) {
+    if ($c -and (Test-Path $c)) { $exePath = $c; break }
+}
+
+if (-not $exePath) {
+    Write-Error "❌ Build failed. Output file not found. Searched: $($outputCandidates -join ', ')"
     exit 1
 }
-Write-Host "✔ Build successful. Output: $Output"
+
+Write-Host "✔ Build successful. Output: $exePath"
+
+# Compute SHA256 and size, write checksum file(s) into OutputDir
+try {
+    $exeFileName = Split-Path $exePath -Leaf
+    $exeHash = (Get-FileHash -Algorithm SHA256 -Path $exePath).Hash
+    $exeSizeMB = [math]::Round((Get-Item $exePath).Length / 1MB, 2)
+
+    $shaFile = Join-Path $OutputDir "SHA256.txt"
+    "$exeHash  $exeFileName" | Out-File -FilePath $shaFile -Encoding ASCII -Force
+
+    $shaSumsFile = Join-Path $OutputDir "SHA256SUMS.txt"
+    @("$exeHash  $exeFileName") | Out-File -FilePath $shaSumsFile -Encoding ASCII -Force
+
+    Write-Host "🔐 SHA256: $exeHash" -ForegroundColor DarkGray
+    Write-Host "📏 Size: $exeSizeMB MB" -ForegroundColor DarkGray
+} catch {
+    Write-Warning "⚠ Failed to compute SHA256 or write checksum files: $($_.Exception.Message)"
+}
+
+# Final message
+Write-Host "Build metadata written to: $OutputDir" -ForegroundColor Green

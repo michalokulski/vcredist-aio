@@ -51,14 +51,7 @@ jobs:
           $packagesFile = (Resolve-Path ./packages.json).Path
           Write-Host "Resolved packages.json path: $packagesFile"
 
-      - name: Prepare packages
-        shell: pwsh
-        run: |
-          Write-Host "Preparing packages using automation/build-nsis.ps1..."
-          $pkg = (Resolve-Path ./packages.json).Path
-          $outDir = (Resolve-Path ./dist -ErrorAction SilentlyContinue).Path
-          if (-not $outDir) { New-Item -ItemType Directory -Path ./dist | Out-Null; $outDir = (Resolve-Path ./dist).Path }
-          pwsh -File automation/build-nsis.ps1 -PackagesFile $pkg -OutputDir $outDir -SkipCompile
+      # NOTE: package preparation is handled inside build-ps2exe.ps1 (it will reuse dist/packages if present)
 
       - name: Debug PowerShell Context
         shell: pwsh
@@ -85,6 +78,23 @@ jobs:
           Write-Host "Invoking: & $scriptPath -PackagesFile $packagesFile -OutputDir $outputDir -VerboseBuild"
           & $scriptPath -PackagesFile $packagesFile -OutputDir $outputDir -VerboseBuild
 
+      - name: Compute EXE metadata and set outputs
+        id: compute-metadata
+        shell: pwsh
+        run: |
+          $exePath = (Resolve-Path ./dist/vcredist-aio.exe -ErrorAction Stop).Path
+          $hash = (Get-FileHash -Algorithm SHA256 -Path $exePath).Hash
+          $short = $hash.Substring(0,12)
+          $sizeBytes = (Get-Item $exePath).Length
+          $sizeMB = [math]::Round($sizeBytes / 1MB, 2)
+          # Expose values to subsequent steps / jobs
+          Write-Host "exe_sha=$hash" >> $env:GITHUB_OUTPUT
+          Write-Host "exe_sha_short=$short" >> $env:GITHUB_OUTPUT
+          Write-Host "exe_size_bytes=$sizeBytes" >> $env:GITHUB_OUTPUT
+          Write-Host "exe_size_mb=$sizeMB" >> $env:GITHUB_OUTPUT
+          Write-Host "exe_path=$exePath" >> $env:GITHUB_OUTPUT
+          Write-Host "Computed EXE metadata: SHA256=$hash, Size=${sizeMB}MB"
+
       - name: Validate build artifacts
         shell: pwsh
         run: |
@@ -97,9 +107,50 @@ jobs:
           }
           Write-Host "✔ All required artifacts present"
 
+      - name: Upload SHA256SUMS.txt as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SHA256SUMS
+          path: dist/SHA256SUMS.txt
+          if-no-files-found: error
+
+      - name: Read SHA256SUMS into output
+        id: read-sums
+        shell: pwsh
+        run: |
+          $sumsPath = (Resolve-Path ./dist/SHA256SUMS.txt -ErrorAction Stop).Path
+          $content = Get-Content -Raw -Path $sumsPath
+          # Set multiline output 'sums'
+          Write-Host "sums<<EOF" >> $env:GITHUB_OUTPUT
+          Write-Host $content >> $env:GITHUB_OUTPUT
+          Write-Host "EOF" >> $env:GITHUB_OUTPUT
+
+      - name: Create Release (attach EXE + SHA256SUMS)
+        if: always()
+        uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: vcredist-aio-${{ steps.compute-metadata.outputs.exe_sha_short }}
+          name: VCRedist AIO ${{ steps.compute-metadata.outputs.exe_sha_short }}
+          files: |
+            dist/vcredist-aio.exe
+            dist/SHA256SUMS.txt
+          body: |
+            ## VCRedist AIO Offline EXE
+            - File: dist/vcredist-aio.exe
+            - SHA256: ${{ steps.compute-metadata.outputs.exe_sha }}
+            - Size: ${{ steps.compute-metadata.outputs.exe_size_mb }} MB
+
+            ### SHA256SUMS
+            ${{ steps.read-sums.outputs.sums }}
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: vcredist-aio
-          path: dist/vcredist-aio.exe
+          path: |
+            dist/vcredist-aio.exe
+            dist/SHA256.txt
           if-no-files-found: error
