@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Build VC Redist AIO into a single EXE using PS2EXE (embed payload).
 
@@ -14,9 +14,9 @@
 #>
 
 [CmdletBinding()]
-param (
-    [string]$Output = "vcredist-aio.exe",
-    [switch]$VerboseBuild
+param(
+  [string]$Output = "vcredist-aio.exe",
+  [switch]$VerboseBuild
 )
 
 $ErrorActionPreference = "Stop"
@@ -24,10 +24,10 @@ $ErrorActionPreference = "Stop"
 Write-Host "== VC Redist AIO – PS2EXE Builder (embed payload) ==" -ForegroundColor Cyan
 Write-Host "Output: $Output"
 
-# Simplify and normalize all Join-Path calls to avoid nested or invalid paths
-$root  = (Resolve-Path "$PSScriptRoot\.." -ErrorAction Stop).Path
-$auto  = Join-Path -Path $root -ChildPath 'automation'
-$stage = Join-Path -Path $auto -ChildPath 'stage-ps2exe'
+# Ensure all Join-Path inputs are explicitly strings to avoid array issues
+$root = (Resolve-Path "$PSScriptRoot\.." -ErrorAction Stop).Path
+$auto = [string](Join-Path -Path $root -ChildPath 'automation')
+$stage = [string](Join-Path -Path $auto -ChildPath 'stage-ps2exe')
 
 # Clean stage
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
@@ -37,37 +37,37 @@ Write-Host "Locating source scripts and packages..." -ForegroundColor Yellow
 
 # Find install/uninstall from several candidate locations
 $installCandidates = @(
-    Join-Path -Path $root -ChildPath 'runtime/install.ps1',
-    Join-Path -Path $auto -ChildPath 'install.ps1',
-    Join-Path -Path $root -ChildPath 'install.ps1'
+  [string](Join-Path -Path $root -ChildPath 'runtime/install.ps1'),
+  [string](Join-Path -Path $auto -ChildPath 'install.ps1'),
+  [string](Join-Path -Path $root -ChildPath 'install.ps1')
 ) | Where-Object { Test-Path $_ }
 
 $uninstallCandidates = @(
-    Join-Path -Path $root -ChildPath 'runtime/uninstall.ps1',
-    Join-Path -Path $auto -ChildPath 'uninstall.ps1',
-    Join-Path -Path $root -ChildPath 'uninstall.ps1'
+  [string](Join-Path -Path $root -ChildPath 'runtime/uninstall.ps1'),
+  [string](Join-Path -Path $auto -ChildPath 'uninstall.ps1'),
+  [string](Join-Path -Path $root -ChildPath 'uninstall.ps1')
 ) | Where-Object { Test-Path $_ }
 
 if ($installCandidates.Count -eq 0 -or $uninstallCandidates.Count -eq 0) {
-    Write-Error "Could not find install.ps1 or uninstall.ps1 in expected locations."
-    exit 1
+  Write-Error "Could not find install.ps1 or uninstall.ps1 in expected locations."
+  exit 1
 }
 
-$installSource   = $installCandidates[0]
+$installSource = $installCandidates[0]
 $uninstallSource = $uninstallCandidates[0]
 
 # Find packages directory (try repo packages/, dist/packages, automation/packages)
 
 $pkgCandidates = @(
-    Join-Path -Path $root -ChildPath 'packages',
-    Join-Path -Path $root -ChildPath 'dist/packages',
-    Join-Path -Path $auto -ChildPath 'packages'
+  [string](Join-Path -Path $root -ChildPath 'packages'),
+  [string](Join-Path -Path $root -ChildPath 'dist/packages'),
+  [string](Join-Path -Path $auto -ChildPath 'packages')
 ) | Where-Object { Test-Path $_ }
 
 $packagesDir = $pkgCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 
 if (-not $packagesDir) {
-    Write-Warning "No packages directory found. The EXE will not include package binaries." -ForegroundColor Yellow
+  Write-Warning "No packages directory found. The EXE will not include package binaries." -ForegroundColor Yellow
 }
 
 Write-Host "Staging and collecting payload files..." -ForegroundColor Yellow
@@ -83,13 +83,13 @@ $payloadFiles += @{ Full = (Join-Path $payloadDir "install.ps1"); Relative = "in
 $payloadFiles += @{ Full = (Join-Path $payloadDir "uninstall.ps1"); Relative = "uninstall.ps1" }
 
 if ($packagesDir) {
-    $pkgTargetDir = Join-Path $payloadDir "packages"
-    New-Item $pkgTargetDir -ItemType Directory -Force | Out-Null
-    Get-ChildItem -Path $packagesDir -File -Recurse | ForEach-Object {
-        $rel = Join-Path "packages" (Split-Path $_.FullName -Leaf)
-        Copy-Item -Path $_.FullName -Destination (Join-Path $pkgTargetDir $_.Name) -Force
-        $payloadFiles += @{ Full = (Join-Path $pkgTargetDir $_.Name); Relative = $rel }
-    }
+  $pkgTargetDir = Join-Path $payloadDir "packages"
+  New-Item $pkgTargetDir -ItemType Directory -Force | Out-Null
+  Get-ChildItem -Path $packagesDir -File -Recurse | ForEach-Object {
+    $rel = Join-Path "packages" (Split-Path $_.FullName -Leaf)
+    Copy-Item -Path $_.FullName -Destination (Join-Path $pkgTargetDir $_.Name) -Force
+    $payloadFiles += @{ Full = (Join-Path $pkgTargetDir $_.Name); Relative = $rel }
+  }
 }
 
 Write-Host "Encoding payload into bootstrap..." -ForegroundColor Yellow
@@ -115,12 +115,12 @@ $bootstrapBuilder.AppendLine("# Embedded payload (Base64)") | Out-Null
 $bootstrapBuilder.AppendLine("$EmbeddedFiles = @{}") | Out-Null
 
 foreach ($p in $payloadFiles) {
-    if (-not (Test-Path $p.Full)) { continue }
-    $b64 = [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($p.Full))
-    $relPath = ($p.Relative -replace "\\","/")
-    $bootstrapBuilder.AppendLine("$EmbeddedFiles['$relPath'] = @'") | Out-Null
-    $bootstrapBuilder.AppendLine($b64) | Out-Null
-    $bootstrapBuilder.AppendLine("'@") | Out-Null
+  if (-not (Test-Path $p.Full)) { continue }
+  $b64 = [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($p.Full))
+  $relPath = ($p.Relative -replace "\\","/")
+  $bootstrapBuilder.AppendLine("$EmbeddedFiles['$relPath'] = @'") | Out-Null
+  $bootstrapBuilder.AppendLine($b64) | Out-Null
+  $bootstrapBuilder.AppendLine("'@") | Out-Null
 }
 
 $bootstrapBuilder.AppendLine('') | Out-Null
