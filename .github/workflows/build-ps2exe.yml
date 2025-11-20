@@ -99,8 +99,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: vcredist-aio-${{ github.run_number }}-${{ steps.compute-metadata.outputs.exe_sha_short }}
-          name: VCRedist AIO ${{ steps.compute-metadata.outputs.exe_sha_short }}
+          # Use only numeric run identifiers to ensure a well-formed tag name
+          tag_name: vcredist-aio-${{ github.run_number }}-${{ github.run_id }}
+          name: VCRedist AIO run ${{ github.run_number }} (id ${{ github.run_id }})
           files: |
             dist/vcredist-aio.exe
             dist/SHA256SUMS.txt
