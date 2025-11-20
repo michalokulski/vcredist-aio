@@ -151,10 +151,13 @@ if (-not (Get-Command ps2exe -ErrorAction SilentlyContinue)) {
 
 # Normalize and validate paths (PackagesFile, OutputDir)
 try {
-    $root = (Resolve-Path "$PSScriptRoot\.." -ErrorAction Stop).Path
+    $root = (Resolve-Path "$PSScriptRoot\.." -ErrorAction Stop | Select-Object -First 1).Path
 } catch {
     $root = (Split-Path -Parent $MyInvocation.MyCommand.Path)
 }
+
+if ($VerboseBuild.IsPresent) { Write-Host "[debug] Root resolved to: $root" -ForegroundColor DarkYellow }
+
 
 # PackagesFile: prefer explicit, else fallback to repo root packages.json
 if (-not $PackagesFile -or [string]::IsNullOrWhiteSpace($PackagesFile)) {
@@ -319,7 +322,7 @@ foreach ($file in $downloadedFiles) {
 Write-Host "✔ Packages bundled ($($downloadedFiles.Count) files)"
 
 # Ensure all Join-Path inputs are explicitly strings to avoid array issues
-$root = (Resolve-Path "$PSScriptRoot\.." -ErrorAction Stop).Path
+$root = (Resolve-Path "$PSScriptRoot\.." -ErrorAction Stop | Select-Object -First 1).Path
 $auto = [string](Join-Path -Path $root -ChildPath 'automation')
 $stage = [string](Join-Path -Path $auto -ChildPath 'stage-ps2exe')
 
@@ -329,16 +332,19 @@ New-Item $stage -ItemType Directory | Out-Null
 
 Write-Host "Locating source scripts and packages..."
 
+if ($VerboseBuild.IsPresent) { Write-Host "[debug] automation dir: $auto" -ForegroundColor DarkYellow }
+if ($VerboseBuild.IsPresent) { Write-Host "[debug] stage dir: $stage" -ForegroundColor DarkYellow }
+
 # Find install/uninstall from several candidate locations and resolve to absolute paths.
 # Use Resolve-Path to guarantee full-path strings (prevents erroneous array/relative results).
 $installCandidatePaths = @(
-    Join-Path -Path $root -ChildPath 'automation\install.ps1',
-    Join-Path -Path $root -ChildPath 'install.ps1'
+    "$root\automation\install.ps1",
+    "$root\install.ps1"
 )
 
 $uninstallCandidatePaths = @(
-    Join-Path -Path $root -ChildPath 'automation\uninstall.ps1',
-    Join-Path -Path $root -ChildPath 'uninstall.ps1'
+    "$root\automation\uninstall.ps1",
+    "$root\uninstall.ps1"
 )
 
 $installCandidates = @()
@@ -355,6 +361,11 @@ foreach ($p in $uninstallCandidatePaths) {
     }
 }
 
+if ($VerboseBuild.IsPresent) { Write-Host "[debug] install candidate paths: $($installCandidatePaths -join ', ')" -ForegroundColor DarkYellow }
+if ($VerboseBuild.IsPresent) { Write-Host "[debug] uninstall candidate paths: $($uninstallCandidatePaths -join ', ')" -ForegroundColor DarkYellow }
+if ($VerboseBuild.IsPresent) { Write-Host "[debug] resolved install candidates: $($installCandidates -join ', ')" -ForegroundColor DarkYellow }
+if ($VerboseBuild.IsPresent) { Write-Host "[debug] resolved uninstall candidates: $($uninstallCandidates -join ', ')" -ForegroundColor DarkYellow }
+
 if ($installCandidates.Count -eq 0 -or $uninstallCandidates.Count -eq 0) {
     Write-Error "❌ Could not find install.ps1 or uninstall.ps1 in expected locations."
     Write-Host "  Searched: $($installCandidatePaths -join ', ')" -ForegroundColor DarkGray
@@ -366,8 +377,8 @@ $installSource = $installCandidates[0]
 $uninstallSource = $uninstallCandidates[0]
 
 # Debug: print resolved source paths to aid CI troubleshooting
-Write-Host "Resolved installSource: $installSource" -ForegroundColor Yellow
-Write-Host "Resolved uninstallSource: $uninstallSource" -ForegroundColor Yellow
+if ($VerboseBuild.IsPresent) { Write-Host "Resolved installSource: $installSource" -ForegroundColor Yellow }
+if ($VerboseBuild.IsPresent) { Write-Host "Resolved uninstallSource: $uninstallSource" -ForegroundColor Yellow }
 
 # Find packages directory (try repo packages/, dist/packages, automation/packages)
 
@@ -391,6 +402,9 @@ New-Item $payloadDir -ItemType Directory | Out-Null
 Copy-Item -Path $installSource -Destination (Join-Path $payloadDir "install.ps1") -Force
 Copy-Item -Path $uninstallSource -Destination (Join-Path $payloadDir "uninstall.ps1") -Force
 
+if ($VerboseBuild.IsPresent) { Write-Host "[debug] Copied install/uninstall to payload dir" }
+
+
 $payloadFiles = @()
 $payloadFiles += @{ Full = (Join-Path $payloadDir "install.ps1"); Relative = "install.ps1" }
 $payloadFiles += @{ Full = (Join-Path $payloadDir "uninstall.ps1"); Relative = "uninstall.ps1" }
@@ -405,7 +419,12 @@ if ($packagesDir) {
   }
 }
 
+if ($VerboseBuild.IsPresent) { Write-Host "[debug] payloadFiles count: $($payloadFiles.Count)" -ForegroundColor DarkYellow }
+if ($VerboseBuild.IsPresent) { foreach ($pf in $payloadFiles) { Write-Host "[debug] payload: $($pf.Relative) -> $($pf.Full)" -ForegroundColor DarkGray } }
+
 Write-Host "Encoding payload into bootstrap..."
+
+if ($VerboseBuild.IsPresent) { Write-Host "[debug] bootstrap will include $($payloadFiles.Count) files" -ForegroundColor DarkYellow }
 
 $bootstrapBuilder = New-Object System.Text.StringBuilder
 
@@ -469,6 +488,11 @@ $bootstrap = $bootstrapBuilder.ToString()
 $bootstrapFile = Join-Path $stage "bootstrap.ps1"
 $bootstrap | Out-File -FilePath $bootstrapFile -Encoding UTF8 -Force
 
+try {
+    $bf = Get-Item $bootstrapFile -ErrorAction Stop
+    if ($VerboseBuild.IsPresent) { Write-Host "[debug] Wrote bootstrap: $bootstrapFile ($([math]::Round($bf.Length/1KB,2)) KB)" -ForegroundColor DarkYellow }
+} catch {}
+
 ### ---- RUN PS2EXE ----
 
 Write-Host "Building EXE (PS2EXE)..."
@@ -489,6 +513,9 @@ $cmd += "  -noConsole:$noConsole `n  -title `"VC Redist AIO`" `n  -description `
 
 Invoke-Expression $cmd
 
+if ($VerboseBuild.IsPresent) { Write-Host "[debug] PS2EXE invoked with command:" -ForegroundColor DarkYellow }
+if ($VerboseBuild.IsPresent) { Write-Host $cmd -ForegroundColor DarkGray }
+
 Write-Host "Build complete. Output: $Output"
 
 ### ---- CLEAN UP ----
@@ -498,6 +525,8 @@ try {
 } catch {
     Write-Warning "⚠ Failed to clean up temporary directories: $($_.Exception.Message)"
 }
+
+if ($VerboseBuild.IsPresent) { Write-Host "[debug] cleanup attempted for stage and downloads" -ForegroundColor DarkYellow }
 
 # Validate output file after build
 ## Locate output EXE (prefer OutputDir) and validate

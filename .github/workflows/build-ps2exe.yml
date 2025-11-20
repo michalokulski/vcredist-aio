@@ -111,6 +111,12 @@ jobs:
           Write-Host "exe_path=$exePath" >> $env:GITHUB_OUTPUT
           Write-Host "Computed EXE metadata: SHA256=$hash, Size=${sizeMB}MB"
 
+      - name: List `dist` contents (debug)
+        shell: pwsh
+        run: |
+          Write-Host "Contents of ./dist:" 
+          if (Test-Path ./dist) { Get-ChildItem ./dist -Recurse | ForEach-Object { Write-Host $_.FullName } } else { Write-Host "(missing)" }
+
       - name: Validate build artifacts
         shell: pwsh
         run: |
