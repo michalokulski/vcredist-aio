@@ -316,12 +316,12 @@ try {
 
 # Resolve install/uninstall script paths
 $installCandidatePaths = @(
-    Join-Path -Path $root -ChildPath 'automation\install.ps1',
-    Join-Path -Path $root -ChildPath 'install.ps1'
+    [System.IO.Path]::Combine($root, 'automation', 'install.ps1'),
+    [System.IO.Path]::Combine($root, 'install.ps1')
 )
 $uninstallCandidatePaths = @(
-    Join-Path -Path $root -ChildPath 'automation\uninstall.ps1',
-    Join-Path -Path $root -ChildPath 'uninstall.ps1'
+    [System.IO.Path]::Combine($root, 'automation', 'uninstall.ps1'),
+    [System.IO.Path]::Combine($root, 'uninstall.ps1')
 )
 
 $installCandidates = @()
