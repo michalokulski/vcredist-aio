@@ -70,7 +70,7 @@ jobs:
           Write-Host "Contents of build-ps2exe.ps1:"
           Get-Content ./automation/build-ps2exe.ps1 -Head 20
 
-      - name: Fail-fast: verify required build inputs
+      - name: "Fail-fast: verify required build inputs"
         shell: pwsh
         run: |
           Write-Host "Checking required files for build..."
