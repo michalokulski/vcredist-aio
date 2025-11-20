@@ -388,8 +388,8 @@ $bootstrapBuilder.AppendLine("") | Out-Null
 $bootstrapBuilder.AppendLine("$ErrorActionPreference = 'Stop'") | Out-Null
 $bootstrapBuilder.AppendLine("") | Out-Null
 $bootstrapBuilder.AppendLine('$extractRoot = Join-Path $env:TEMP ''vcredist-aio-runtime''') | Out-Null
-$bootstrapBuilder.AppendLine("if (Test-Path $extractRoot) { Remove-Item $extractRoot -Recurse -Force }") | Out-Null
-$bootstrapBuilder.AppendLine("New-Item $extractRoot -ItemType Directory | Out-Null") | Out-Null
+$bootstrapBuilder.AppendLine('if (Test-Path $extractRoot) { Remove-Item $extractRoot -Recurse -Force }') | Out-Null
+$bootstrapBuilder.AppendLine('New-Item $extractRoot -ItemType Directory | Out-Null') | Out-Null
 $bootstrapBuilder.AppendLine("") | Out-Null
 $bootstrapBuilder.AppendLine("# Embedded payload (Base64)") | Out-Null
 $bootstrapBuilder.AppendLine("$EmbeddedFiles = @{}") | Out-Null
