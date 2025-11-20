@@ -359,14 +359,12 @@ $payloadFiles = @()
 $payloadFiles += @{ Full = (Join-Path $payloadDir "install.ps1"); Relative = "install.ps1" }
 $payloadFiles += @{ Full = (Join-Path $payloadDir "uninstall.ps1"); Relative = "uninstall.ps1" }
 
-if ($packagesDir) {
-  $pkgTargetDir = Join-Path $payloadDir "packages"
-  New-Item $pkgTargetDir -ItemType Directory -Force | Out-Null
-  Get-ChildItem -Path $packagesDir -File -Recurse | ForEach-Object {
-    $rel = Join-Path "packages" (Split-Path $_.FullName -Leaf)
-    Copy-Item -Path $_.FullName -Destination (Join-Path $pkgTargetDir $_.Name) -Force
-    $payloadFiles += @{ Full = (Join-Path $pkgTargetDir $_.Name); Relative = $rel }
-  }
+# Include any package files copied into the staging payload/packages directory
+if (Test-Path $payloadPackagesDir) {
+        Get-ChildItem -Path $payloadPackagesDir -File -Recurse | ForEach-Object {
+                $rel = Join-Path "packages" $_.Name
+                $payloadFiles += @{ Full = $_.FullName; Relative = $rel }
+        }
 }
 
 if ($VerboseBuild.IsPresent) { Write-Host "[debug] payloadFiles count: $($payloadFiles.Count)" -ForegroundColor DarkYellow }
