@@ -37,20 +37,18 @@ Write-Host "Locating source scripts and packages..."
 
 # Find install/uninstall from several candidate locations
 $installCandidates = @(
-  [string](Join-Path -Path $root -ChildPath 'runtime/install.ps1'),
-  [string](Join-Path -Path $auto -ChildPath 'install.ps1'),
-  [string](Join-Path -Path $root -ChildPath 'install.ps1')
+    Join-Path $root "automation/install.ps1",
+    Join-Path $root "install.ps1"
 ) | Where-Object { Test-Path $_ }
 
 $uninstallCandidates = @(
-  [string](Join-Path -Path $root -ChildPath 'runtime/uninstall.ps1'),
-  [string](Join-Path -Path $auto -ChildPath 'uninstall.ps1'),
-  [string](Join-Path -Path $root -ChildPath 'uninstall.ps1')
+    Join-Path $root "automation/uninstall.ps1",
+    Join-Path $root "uninstall.ps1"
 ) | Where-Object { Test-Path $_ }
 
 if ($installCandidates.Count -eq 0 -or $uninstallCandidates.Count -eq 0) {
-  Write-Error "Could not find install.ps1 or uninstall.ps1 in expected locations."
-  exit 1
+    Write-Error "❌ Could not find install.ps1 or uninstall.ps1 in expected locations."
+    exit 1
 }
 
 $installSource = $installCandidates[0]
