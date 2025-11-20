@@ -15,7 +15,9 @@
 
 [CmdletBinding()]
 param(
-  [string]$PackagesFile = (Join-Path $PSScriptRoot "..\packages.json"),
+  [Parameter(Mandatory = $true)]
+  [string]$PackagesFile,
+
   [string]$Output = "vcredist-aio.exe",
   [switch]$VerboseBuild
 )
@@ -147,7 +149,18 @@ if (-not (Get-Command ps2exe -ErrorAction SilentlyContinue)) {
     exit 1
 }
 
-# Improved error handling for missing PackagesFile
+# Improved parameter validation for PackagesFile
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$PackagesFile,
+
+    [string]$Output = "vcredist-aio.exe",
+    [switch]$VerboseBuild
+)
+
+$ErrorActionPreference = "Stop"
+
+# Validate PackagesFile
 if (-not (Test-Path $PackagesFile)) {
     Write-Error "❌ Packages file not found: $PackagesFile. Ensure it exists and is passed correctly."
     exit 1

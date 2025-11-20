@@ -45,6 +45,12 @@ jobs:
           Write-Host "Current directory contents:"
           Get-ChildItem -Recurse
 
+      - name: Debug packages.json path
+        shell: pwsh
+        run: |
+          $packagesFile = (Resolve-Path ./packages.json).Path
+          Write-Host "Resolved packages.json path: $packagesFile"
+
     #   - name: Prepare packages
     #     shell: pwsh
     #     run: |
@@ -55,7 +61,8 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "Running PS2EXE build script..."
-          ./automation/build-ps2exe.ps1 -PackagesFile ./packages.json -VerboseBuild
+          $packagesFile = (Resolve-Path ./packages.json).Path
+          ./automation/build-ps2exe.ps1 -PackagesFile $packagesFile -VerboseBuild
 
       - name: Validate build artifacts
         shell: pwsh
