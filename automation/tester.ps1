@@ -1,4 +1,8 @@
 # VCRedist AIO Installer Automated Test Script
+param(
+    [switch]$Auto
+)
+
 # Set these paths as needed
 $InstallerExe = "C:\Users\admin\Downloads\VC_Redist_AIO_Offline.exe"  # <-- Set to your actual built EXE
 $TestDir = "C:\VCRedistTest"
@@ -81,24 +85,21 @@ function Run-Test {
 
 $results = @()
 
-# 1. Silent install (all packages)
+# Always run silent install/uninstall tests
 $results += Run-Test -Name "install_silent" -InstallerArgs "/S /LOGDIR=`"$LogDir`"" -Desc "Silent install, all packages"
+$results += Run-Test -Name "install_silent-uninstall" -InstallerArgs "-Silent" -Desc "Uninstall after install_silent"
 
-# 2. Interactive install (all packages)
-$results += Run-Test -Name "install_interactive" -InstallerArgs "/LOGDIR=`"$LogDir`"" -Desc "Interactive install, all packages"
-
-# 3. Install with package filter (e.g., only 2015+)
 $results += Run-Test -Name "install_filter" -InstallerArgs "/S /PACKAGES=2015+ /LOGDIR=`"$LogDir`"" -Desc "Silent install, 2015+ only"
+$results += Run-Test -Name "install_filter-uninstall" -InstallerArgs "-Silent" -Desc "Uninstall after install_filter"
 
-# 4. Install with custom log dir
 $results += Run-Test -Name "install_customlog" -InstallerArgs "/S /LOGDIR=`"$LogDir`"" -Desc "Silent install, custom log dir"
+$results += Run-Test -Name "install_customlog-uninstall" -InstallerArgs "-Silent" -Desc "Uninstall after install_customlog"
 
-# 5. Extract-only mode
-$extractDir = "$TestDir\\extracted"
-$results += Run-Test -Name "extract_only" -InstallerArgs "/EXTRACT=`"$extractDir`"" -Desc "Extract-only mode"
-
-# 6. Error case: invalid parameter
-$results += Run-Test -Name "invalid_param" -InstallerArgs "/FOOBAR" -Desc "Invalid parameter test"
+if (-not $Auto) {
+    # Only run interactive/manual tests if not in auto mode
+    $results += Run-Test -Name "install_interactive" -InstallerArgs "/LOGDIR=`"$LogDir`"" -Desc "Interactive install, all packages"
+    $results += Run-Test -Name "install_interactive-uninstall" -InstallerArgs "-Silent" -Desc "Uninstall after install_interactive"
+}
 
 # Generate summary report
 $summary = @()

@@ -1,0 +1,74 @@
+name: Build PS2EXE Installer
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build vcredist-aio.exe
+    runs-on: windows-latest
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install PS2EXE
+        shell: pwsh
+        run: |
+          Install-Module ps2exe -Scope CurrentUser -Force
+
+      - name: Prepare packages (build-nsis)
+        shell: pwsh
+        run: |
+          Write-Host "Preparing packages using build-nsis.ps1..."
+          # build-nsis.ps1 will download required runtime packages into the repo (dist/packages or packages)
+          ./automation/build-nsis.ps1
+
+      - name: Build EXE using PS2EXE
+        shell: pwsh
+        run: |
+          Write-Host "Running PS2EXE build script..."
+          ./automation/build-ps2exe.ps1 -VerboseBuild
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vcredist-aio
+          path: vcredist-aio.exe
+          if-no-files-found: error
+
+  release:
+    name: Create Release
+    runs-on: windows-latest
+    needs: build
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: vcredist-aio
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ github.run_number }}
+          name: "VC Redist AIO Build ${{ github.run_number }}"
+          body: |
+            Automated PS2EXE build.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload EXE to release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ github.run_number }}
+          files: |
+            vcredist-aio.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

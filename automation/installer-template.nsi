@@ -176,37 +176,17 @@ Section "MainSection" SEC01
   
   DetailPrint "Extracting installation files..."
   
-  ; Extract installer script (UTF-8 encoding expected)
-  ${IfNot} ${FileExists} "$EXEDIR\install.ps1"
-    DetailPrint "ERROR: install.ps1 not found in EXE directory. Aborting."
-    MessageBox MB_ICONSTOP|MB_OK "Critical error: install.ps1 not found. The installer cannot continue."
-    Abort
-  ${EndIf}
+  ; Extract installer script (embedded in EXE during compilation)
   File "install.ps1"
   
-  ; Extract uninstaller script (UTF-8 encoding expected)
-  ${IfNot} ${FileExists} "$EXEDIR\uninstall.ps1"
-    DetailPrint "ERROR: uninstall.ps1 not found in EXE directory. Aborting."
-    MessageBox MB_ICONSTOP|MB_OK "Critical error: uninstall.ps1 not found. The installer cannot continue."
-    Abort
-  ${EndIf}
+  ; Extract uninstaller script (embedded in EXE during compilation)
   File "uninstall.ps1"
   
   ; Create packages directory
   CreateDirectory "$INSTDIR\packages"
   SetOutPath "$INSTDIR\packages"
   
-  ; Extract all packages
-  ; If any package file is missing, abort with error
-  !macro CHECK_PACKAGE_EXISTS FILE
-    ${IfNot} ${FileExists} "$EXEDIR\packages\${FILE}"
-      DetailPrint "ERROR: Package file missing: ${FILE}"
-      MessageBox MB_ICONSTOP|MB_OK "Critical error: Required package file missing: ${FILE}\nThe installer cannot continue."
-      Abort
-    ${EndIf}
-  !macroend
-
-  ; List of files to check
+  ; Extract all packages (embedded in EXE during compilation)
 {{FILE_LIST}}
   
   ; Check if extract-only mode
@@ -214,11 +194,9 @@ Section "MainSection" SEC01
     DetailPrint "Extract-only mode: Files extracted to $INSTDIR"
     DetailPrint "Skipping installation as requested"
     
-    ; If running in silent mode, just quit
     ${If} ${Silent}
       Quit
     ${Else}
-      ; Interactive mode - show message box
       MessageBox MB_OK "Files extracted successfully to:$\n$\n$INSTDIR$\n$\nYou can now run install.ps1 manually."
       Quit
     ${EndIf}
@@ -231,8 +209,7 @@ Section "MainSection" SEC01
   ; Build PowerShell command line arguments
   StrCpy $1 "-PackageDir \`"$INSTDIR\packages\`""
   
-  ; Add log directory parameter if specified, otherwise DON'T pass it
-  ; This allows install.ps1 to use its default (TEMP)
+  ; Add log directory parameter if specified, otherwise let script default to TEMP
   ${If} $LogFile != ""
     StrCpy $1 "$1 -LogDir \`"$LogFile\`""
     DetailPrint "Custom log directory: $LogFile"
@@ -293,13 +270,11 @@ SectionEnd
 
 ; Uninstaller Section
 Section "Uninstall"
-  ; Show confirmation dialog (unless silent)
   ${IfNot} ${Silent}
     MessageBox MB_YESNO|MB_ICONQUESTION "This will run the VCRedist AIO uninstaller.$\n$\nWARNING: This will attempt to remove all Visual C++ Redistributables, which may break applications that depend on them.$\n$\nDo you want to continue?" IDYES +2
     Abort "Uninstallation cancelled by user"
   ${EndIf}
   
-  ; Run uninstall script if it exists
   ${If} ${FileExists} "$INSTDIR\uninstall.ps1"
     DetailPrint "Running uninstall script..."
     
@@ -309,9 +284,7 @@ Section "Uninstall"
       StrCpy $1 "$1 -Silent"
     ${EndIf}
     
-    ; Execute uninstall script
     ExecWait 'powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File "$INSTDIR\uninstall.ps1" $1' $0
-    
     DetailPrint "Uninstall script exit code: $0"
     
     ${If} $0 == 0
@@ -332,7 +305,6 @@ Section "Uninstall"
   Delete "$INSTDIR\install.ps1"
   
   ; Remove log files (with user confirmation in non-silent mode)
-  ; Use FindFirst to check if any log files exist (wildcards don't work with FileExists)
   FindFirst $0 $1 "$INSTDIR\vcredist-*.log"
   ${If} $1 != ""
     FindClose $0
@@ -345,7 +317,7 @@ Section "Uninstall"
     SkipLogRemoval:
   ${EndIf}
   
-  ; Remove packages directory (only if empty or user confirms)
+  ; Remove packages directory (only if empty or confirmed)
   ${If} ${FileExists} "$INSTDIR\packages\*.*"
     ${IfNot} ${Silent}
       MessageBox MB_YESNO "Remove downloaded package files?$\n$\nDirectory: $INSTDIR\packages" IDYES +2

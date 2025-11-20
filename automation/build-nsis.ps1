@@ -140,6 +140,15 @@ $packages = $packagesJson.packages
 # Create output directory
 New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 
+# Normalize OutputDir to an absolute path to avoid relative path duplication later
+try {
+    $OutputDir = (Get-Item -Path $OutputDir -ErrorAction Stop).FullName
+    Write-Host "  Normalized OutputDir: $OutputDir" -ForegroundColor DarkGray
+} catch {
+    Write-Error "❌ Failed to resolve OutputDir to full path: $OutputDir. Error: $($_.Exception.Message)"
+    exit 1
+}
+
 # Create temporary download directory
 $downloadDir = Join-Path $OutputDir "downloads"
 New-Item -ItemType Directory -Path $downloadDir -Force | Out-Null
@@ -325,24 +334,82 @@ function Copy-AsUtf8 {
 Copy-AsUtf8 -Source $installScriptPath -Destination (Join-Path $OutputDir 'install.ps1')
 Copy-AsUtf8 -Source $uninstallScriptPath -Destination (Join-Path $OutputDir 'uninstall.ps1')
 
-# Get version from 2015+ x64 package
-$vcredist2015Plus = $packages | Where-Object { $_.id -eq "Microsoft.VCRedist.2015Plus.x64" }
-$productVersion = if ($vcredist2015Plus) { $vcredist2015Plus.version } else { "1.0.0.0" }
+# === Diagnostics: Check for required files and list directory contents ===
+$requiredFiles = @('install.ps1', 'uninstall.ps1')
+foreach ($file in $requiredFiles) {
+    $fullPath = Join-Path $OutputDir $file
+    if (-not (Test-Path $fullPath)) {
+        Write-Error "❌ Required file missing in output directory: $file"
+        exit 1
+    }
+}
 
-# Create NSIS script
-Write-Host "`n📝 Creating NSIS installer script..." -ForegroundColor Cyan
+# Check for all package files
+$missingPackages = @()
+foreach ($file in $downloadedFiles) {
+    $pkgPath = Join-Path $packagesSubDir $file.FileName
+    if (-not (Test-Path $pkgPath)) {
+        $missingPackages += $file.FileName
+    }
+}
+if ($missingPackages.Count -gt 0) {
+    Write-Error "❌ Missing package files in ${packagesSubDir}:`n  $($missingPackages -join "`n  ")"
+    exit 1
+}
 
-$nsisScript = Join-Path $OutputDir "installer.nsi"
+# Warn if scripts contain non-ASCII characters
+foreach ($script in @('install.ps1', 'uninstall.ps1')) {
+    $path = Join-Path $OutputDir $script
+    $content = Get-Content $path -Raw
+    if ($content -match '[^\x00-\x7F]') {
+        Write-Warning "⚠ $script contains non-ASCII characters. This may cause encoding issues."
+    }
+}
 
-# Build NSIS script from template file
-$templatePath = Join-Path $PSScriptRoot "installer-template.nsi"
+Write-Host "`n📂 Output directory contents before NSIS compilation:" -ForegroundColor Yellow
+Get-ChildItem -Path $OutputDir -Recurse | ForEach-Object {
+    $size = if ($_.PSIsContainer) { "<DIR>" } else { "$([math]::Round($_.Length/1KB,1)) KB" }
+    Write-Host ("  {0,-60} {1,8}" -f $_.FullName, $size)
+}
 
+# Read template
+
+# Ensure template path and nsis script path are set (provide sensible defaults)
+if (-not $templatePath) {
+    $templatePath = Join-Path $PSScriptRoot 'installer-template.nsi'
+    Write-Host "  Template path not set. Using default: $templatePath" -ForegroundColor DarkGray
+}
+
+if (-not $nsisScript) {
+    $nsisScript = Join-Path $OutputDir 'installer.nsi'
+    Write-Host "  NSIS script path not set. Using default: $nsisScript" -ForegroundColor DarkGray
+}
+
+# Derive product version from package list if not provided
+if (-not $productVersion) {
+    $verStrings = @()
+    if ($packages) { $verStrings = $packages | ForEach-Object { $_.version } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } }
+    $parsed = @()
+    foreach ($v in $verStrings) {
+        try {
+            $parsed += [version]$v
+        } catch {
+            # ignore non-parseable versions
+        }
+    }
+    if ($parsed.Count -gt 0) {
+        $productVersion = ($parsed | Sort-Object -Descending)[0].ToString()
+    } else {
+        $productVersion = (Get-Date -Format 'yyyy.MM.dd')
+    }
+    Write-Host "  Using product version: $productVersion" -ForegroundColor DarkGray
+}
+
+# Validate template exists and read it
 if (-not (Test-Path $templatePath)) {
     Write-Error "❌ Template file not found: $templatePath"
     exit 1
 }
-
-# Read template
 
 try {
     $templateContent = Get-Content -Path $templatePath -Raw -ErrorAction Stop
@@ -383,84 +450,90 @@ try {
     Write-Error "❌ Failed to write NSIS script: $nsisScript. Error: $($_.Exception.Message)"
     exit 1
 }
+Write-Host "`n📝 First 20 lines of NSIS script:" -ForegroundColor Yellow
+Get-Content $nsisScript -TotalCount 20 | ForEach-Object { Write-Host "  $_" }
 
-Write-Host "✔ NSIS script created" -ForegroundColor Green
-
-# Compile NSIS installer
-Write-Host "`n🔨 Compiling NSIS installer..." -ForegroundColor Cyan
-
-# Create log file for NSIS output
-$nsisLogFile = Join-Path $OutputDir "nsis-build.log"
-
-$nsisArgs = @(
-    "/V4",  # Verbosity level 4 (highest)
-    $nsisScript
-)
-
-Write-Host "  NSIS command: $nsisPath $($nsisArgs -join ' ')" -ForegroundColor DarkGray
-Write-Host "  NSIS log: $nsisLogFile" -ForegroundColor DarkGray
-
-# Run NSIS with simple output redirection (avoiding runspace issues)
+# Set working directory for NSIS compilation
+Push-Location $OutputDir
 try {
-    $output = & $nsisPath $nsisArgs 2>&1
-    $exitCode = $LASTEXITCODE
-    
-    # Save output to log file
-    $logContent = "NSIS Build Log - $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`n"
-    $logContent += "=" * 80 + "`n"
-    $logContent += "Script: $nsisScript`n"
-    $logContent += "Output File: VC_Redist_AIO_Offline.exe`n"
-    $logContent += "Exit Code: $exitCode`n"
-    $logContent += "`nOutput:`n"
-    $logContent += $output -join "`n"
-    
-    $logContent | Out-File $nsisLogFile -Encoding UTF8 -Force
-    
-    # Display output with color coding
-    if ($DebugMode) {
-        $output | ForEach-Object {
-            $line = $_.ToString()
-            if ($line -match "error|fail|warning") {
-                Write-Host "  NSIS: $line" -ForegroundColor Yellow
-            } else {
-                Write-Host "  NSIS: $line" -ForegroundColor DarkGray
+    # Compile NSIS installer
+    Write-Host "`n🔨 Compiling NSIS installer..." -ForegroundColor Cyan
+
+    # Create log file for NSIS output
+    $nsisLogFile = Join-Path $OutputDir "nsis-build.log"
+
+    $nsisArgs = @(
+        "/V4",  # Verbosity level 4 (highest)
+        $nsisScript
+    )
+
+    Write-Host "  NSIS command: $nsisPath $($nsisArgs -join ' ')" -ForegroundColor DarkGray
+    Write-Host "  NSIS log: $nsisLogFile" -ForegroundColor DarkGray
+
+    # Run NSIS with simple output redirection (avoiding runspace issues)
+    try {
+        $output = & $nsisPath $nsisArgs 2>&1
+        $exitCode = $LASTEXITCODE
+        
+        # Save output to log file
+        $logContent = "NSIS Build Log - $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`n"
+        $logContent += "=" * 80 + "`n"
+        $logContent += "Script: $nsisScript`n"
+        $logContent += "Output File: VC_Redist_AIO_Offline.exe`n"
+        $logContent += "Exit Code: $exitCode`n"
+        $logContent += "`nOutput:`n"
+        $logContent += $output -join "`n"
+        
+        $logContent | Out-File $nsisLogFile -Encoding UTF8 -Force
+        
+        # Display output with color coding
+        if ($DebugMode) {
+            $output | ForEach-Object {
+                $line = $_.ToString()
+                if ($line -match "error|fail|warning") {
+                    Write-Host "  NSIS: $line" -ForegroundColor Yellow
+                } else {
+                    Write-Host "  NSIS: $line" -ForegroundColor DarkGray
+                }
             }
         }
-    }
-    
-    # Check exit code
-    if ($exitCode -ne 0) {
-        Write-Error "❌ NSIS compilation failed with exit code: $exitCode"
-        Write-Host "`n📋 NSIS build log saved to: $nsisLogFile" -ForegroundColor Yellow
         
-        # Display full log content on failure
+        # Check exit code
+        if ($exitCode -ne 0) {
+            Write-Error "❌ NSIS compilation failed with exit code: $exitCode"
+            Write-Host "`n📋 NSIS build log saved to: $nsisLogFile" -ForegroundColor Yellow
+            
+            # Display full log content on failure
+            if (Test-Path $nsisLogFile) {
+                Write-Host "`n📄 Full NSIS build log:" -ForegroundColor Yellow
+                Write-Host "================================" -ForegroundColor Yellow
+                Get-Content $nsisLogFile | ForEach-Object { Write-Host $_ }
+                Write-Host "================================" -ForegroundColor Yellow
+            } else {
+                Write-Host "`nLast 20 lines of output:" -ForegroundColor Yellow
+                $output | Select-Object -Last 20 | ForEach-Object { Write-Host "  $_" }
+            }
+            exit 1
+        }
+        
+        Write-Host "✔ NSIS compilation successful" -ForegroundColor Green
+        
+    } catch {
+        Write-Host "`n❌ NSIS execution failed: $($_.Exception.Message)" -ForegroundColor Red
+        
+        # Try to display the log file if it exists
         if (Test-Path $nsisLogFile) {
             Write-Host "`n📄 Full NSIS build log:" -ForegroundColor Yellow
             Write-Host "================================" -ForegroundColor Yellow
             Get-Content $nsisLogFile | ForEach-Object { Write-Host $_ }
             Write-Host "================================" -ForegroundColor Yellow
-        } else {
-            Write-Host "`nLast 20 lines of output:" -ForegroundColor Yellow
-            $output | Select-Object -Last 20 | ForEach-Object { Write-Host "  $_" }
         }
+        
+        Write-Error "NSIS compilation failed"
         exit 1
     }
-    
-    Write-Host "✔ NSIS compilation successful" -ForegroundColor Green
-    
-} catch {
-    Write-Host "`n❌ NSIS execution failed: $($_.Exception.Message)" -ForegroundColor Red
-    
-    # Try to display the log file if it exists
-    if (Test-Path $nsisLogFile) {
-        Write-Host "`n📄 Full NSIS build log:" -ForegroundColor Yellow
-        Write-Host "================================" -ForegroundColor Yellow
-        Get-Content $nsisLogFile | ForEach-Object { Write-Host $_ }
-        Write-Host "================================" -ForegroundColor Yellow
-    }
-    
-    Write-Error "NSIS compilation failed"
-    exit 1
+} finally {
+    Pop-Location
 }
 
 $outputExe = Join-Path $OutputDir "VC_Redist_AIO_Offline.exe"
