@@ -58,7 +58,7 @@ jobs:
           $pkg = (Resolve-Path ./packages.json).Path
           $outDir = (Resolve-Path ./dist -ErrorAction SilentlyContinue).Path
           if (-not $outDir) { New-Item -ItemType Directory -Path ./dist | Out-Null; $outDir = (Resolve-Path ./dist).Path }
-          pwsh -File automation/build-nsis.ps1 -PackagesFile $pkg -OutputDir $outDir
+          pwsh -File automation/build-nsis.ps1 -PackagesFile $pkg -OutputDir $outDir -SkipCompile
 
       - name: Debug PowerShell Context
         shell: pwsh
@@ -78,7 +78,12 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "Running PS2EXE build script..."
-          pwsh -File ./automation/build-ps2exe.ps1 -PackagesFile ./packages.json -VerboseBuild
+          $scriptPath = (Resolve-Path ./automation/build-ps2exe.ps1).Path
+          $packagesFile = (Resolve-Path ./packages.json).Path
+          $outputDir = (Resolve-Path ./dist -ErrorAction SilentlyContinue).Path
+          if (-not $outputDir) { New-Item -ItemType Directory -Path ./dist | Out-Null; $outputDir = (Resolve-Path ./dist).Path }
+          Write-Host "Invoking: & $scriptPath -PackagesFile $packagesFile -OutputDir $outputDir -VerboseBuild"
+          & $scriptPath -PackagesFile $packagesFile -OutputDir $outputDir -VerboseBuild
 
       - name: Validate build artifacts
         shell: pwsh

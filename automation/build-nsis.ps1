@@ -8,7 +8,11 @@ param(
     [string] $OutputDir,
     
     [Parameter(Mandatory = $false)]
-    [switch] $DebugMode = $false
+    [switch] $DebugMode = $false,
+
+    # When set, only download and bundle packages; skip NSIS script generation and compilation.
+    [Parameter(Mandatory = $false)]
+    [switch] $SkipCompile = $false
 )
 
 $ErrorActionPreference = "Stop"
@@ -261,6 +265,15 @@ foreach ($file in $downloadedFiles) {
 }
 
 Write-Host "✔ Packages bundled ($($downloadedFiles.Count) files)"
+
+# If caller requested download-only, skip NSIS generation/compilation and exit
+if ($SkipCompile) {
+    Write-Host "`nℹ Skipping NSIS compilation as requested (-SkipCompile). Output available at: $OutputDir" -ForegroundColor Cyan
+    Write-Host "  - packages: $(Join-Path $OutputDir 'packages')" -ForegroundColor DarkGray
+    Write-Host "  - install/uninstall scripts: $OutputDir" -ForegroundColor DarkGray
+    Write-Host "✅ Package preparation complete." -ForegroundColor Green
+    exit 0
+}
 
 # Ensure NSIS is installed
 Write-Host "`n🔍 Checking for NSIS..." -ForegroundColor Cyan
