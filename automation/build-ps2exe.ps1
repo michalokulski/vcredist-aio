@@ -15,6 +15,7 @@
 
 [CmdletBinding()]
 param(
+  [string]$PackagesFile = (Join-Path $PSScriptRoot "..\packages.json"),
   [string]$Output = "vcredist-aio.exe",
   [switch]$VerboseBuild
 )
