@@ -398,7 +398,7 @@ foreach ($p in $payloadFiles) {
   if (-not (Test-Path $p.Full)) { continue }
   $b64 = [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($p.Full))
   $relPath = ($p.Relative -replace "\\","/")
-  $bootstrapBuilder.AppendLine("$EmbeddedFiles['$relPath'] = @'") | Out-Null
+    $bootstrapBuilder.AppendLine('$EmbeddedFiles[' + "'" + $relPath + "'" + "] = @'") | Out-Null
   $bootstrapBuilder.AppendLine($b64) | Out-Null
   $bootstrapBuilder.AppendLine("'@") | Out-Null
 }
