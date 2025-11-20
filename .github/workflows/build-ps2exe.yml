@@ -31,11 +31,11 @@ jobs:
             exit 1
           }
 
-      - name: Prepare packages
-        shell: pwsh
-        run: |
-          Write-Host "Preparing packages using build-nsis.ps1..."
-          ./automation/build-nsis.ps1 -PackagesFile packages.json -OutputDir dist
+    #   - name: Prepare packages
+    #     shell: pwsh
+    #     run: |
+    #       Write-Host "Preparing packages using build-nsis.ps1..."
+    #       ./automation/build-nsis.ps1 -PackagesFile packages.json -OutputDir dist
 
       - name: Build EXE using PS2EXE
         shell: pwsh

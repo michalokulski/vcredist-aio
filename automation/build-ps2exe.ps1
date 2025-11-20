@@ -138,7 +138,7 @@ function Get-InstallerInfoFromManifest {
     }
 }
 
-Write-Host "🚀 Building VCRedist AIO NSIS Installer..." -ForegroundColor Cyan
+Write-Host "🚀 Building VCRedist AIO Installer..." -ForegroundColor Cyan
 
 # Check if PS2EXE is installed
 if (-not (Get-Command ps2exe -ErrorAction SilentlyContinue)) {
