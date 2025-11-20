@@ -51,6 +51,15 @@ jobs:
           $packagesFile = (Resolve-Path ./packages.json).Path
           Write-Host "Resolved packages.json path: $packagesFile"
 
+      - name: Prepare packages
+        shell: pwsh
+        run: |
+          Write-Host "Preparing packages using automation/build-nsis.ps1..."
+          $pkg = (Resolve-Path ./packages.json).Path
+          $outDir = (Resolve-Path ./dist -ErrorAction SilentlyContinue).Path
+          if (-not $outDir) { New-Item -ItemType Directory -Path ./dist | Out-Null; $outDir = (Resolve-Path ./dist).Path }
+          pwsh -File automation/build-nsis.ps1 -PackagesFile $pkg -OutputDir $outDir
+
       - name: Debug PowerShell Context
         shell: pwsh
         run: |

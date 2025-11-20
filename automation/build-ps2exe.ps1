@@ -15,10 +15,9 @@
 
 # Ensure the script is saved with UTF-8 encoding and validate the param block
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$PackagesFile,
-
+    [string]$PackagesFile = $null,
     [string]$Output = "vcredist-aio.exe",
+    [string]$OutputDir = $null,
     [switch]$VerboseBuild
 )
 
@@ -141,6 +140,7 @@ function Get-InstallerInfoFromManifest {
     }
 }
 
+# Begin runtime checks and path normalization
 Write-Host "🚀 Building VCRedist AIO Installer..." -ForegroundColor Cyan
 
 # Check if PS2EXE is installed
@@ -149,20 +149,45 @@ if (-not (Get-Command ps2exe -ErrorAction SilentlyContinue)) {
     exit 1
 }
 
-# Improved parameter validation for PackagesFile
-param(
-    [Parameter(Mandatory = $true)]
-    [string]$PackagesFile,
+# Normalize and validate paths (PackagesFile, OutputDir)
+try {
+    $root = (Resolve-Path "$PSScriptRoot\.." -ErrorAction Stop).Path
+} catch {
+    $root = (Split-Path -Parent $MyInvocation.MyCommand.Path)
+}
 
-    [string]$Output = "vcredist-aio.exe",
-    [switch]$VerboseBuild
-)
+# PackagesFile: prefer explicit, else fallback to repo root packages.json
+if (-not $PackagesFile -or [string]::IsNullOrWhiteSpace($PackagesFile)) {
+    $candidate = Join-Path $root 'packages.json'
+    if (Test-Path $candidate) {
+        $PackagesFile = (Resolve-Path $candidate).Path
+    }
+}
 
-$ErrorActionPreference = "Stop"
+if (-not $PackagesFile) {
+    Write-Error "❌ Packages file not specified and no packages.json found at repo root."
+    exit 1
+}
 
-# Validate PackagesFile
-if (-not (Test-Path $PackagesFile)) {
-    Write-Error "❌ Packages file not found: $PackagesFile. Ensure it exists and is passed correctly."
+try {
+    $PackagesFile = (Resolve-Path $PackagesFile -ErrorAction Stop).Path
+} catch {
+    Write-Error "❌ Could not resolve PackagesFile path: $PackagesFile"
+    exit 1
+}
+
+# Output defaults
+if (-not $Output -or [string]::IsNullOrWhiteSpace($Output)) { $Output = 'vcredist-aio.exe' }
+if (-not $OutputDir -or [string]::IsNullOrWhiteSpace($OutputDir)) {
+    $OutputDir = Join-Path $root 'dist'
+}
+
+try {
+    New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
+    $OutputDir = (Get-Item -Path $OutputDir -ErrorAction Stop).FullName
+    Write-Host "  Normalized OutputDir: $OutputDir" -ForegroundColor DarkGray
+} catch {
+    Write-Error "❌ Failed to create/resolve OutputDir: $OutputDir. Error: $($_.Exception.Message)"
     exit 1
 }
 

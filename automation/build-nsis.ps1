@@ -1,4 +1,6 @@
-﻿param(
+﻿#!/usr/bin/env pwsh
+# Encoding: UTF-8
+param(
     [Parameter(Mandatory = $true)]
     [string] $PackagesFile,
 

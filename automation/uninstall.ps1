@@ -1,4 +1,5 @@
 ﻿
+# Encoding: UTF-8
 <#
 .SYNOPSIS
     VCRedist AIO Uninstaller - Removes Microsoft Visual C++ Redistributables
