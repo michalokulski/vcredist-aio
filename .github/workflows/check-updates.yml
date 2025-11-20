@@ -31,7 +31,7 @@ jobs:
           git config --global user.name "github-actions"
           git config --global user.email "actions@github.com"
 
-      - name: Push update branch if exists
+      - name: Push update branch and trigger build
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -45,6 +45,18 @@ jobs:
             $url = "https://x-access-token:$env:GITHUB_TOKEN@github.com/$repo.git"
             git push $url HEAD:refs/heads/$branch
             Write-Host "✔ Branch pushed: $branch"
+
+            # Trigger the PS2EXE build workflow via the Actions REST API
+            try {
+              $workflowFile = 'build-ps2exe.yml'
+              $dispatchUri = "https://api.github.com/repos/$repo/actions/workflows/$workflowFile/dispatches"
+              $body = @{ ref = 'main' } | ConvertTo-Json
+              $headers = @{ Authorization = "token $env:GITHUB_TOKEN"; Accept = 'application/vnd.github+json'; 'User-Agent' = 'github-actions' }
+              Invoke-RestMethod -Uri $dispatchUri -Method Post -Headers $headers -Body $body -ContentType 'application/json'
+              Write-Host "✔ Dispatched workflow: $workflowFile (ref: main)"
+            } catch {
+              Write-Warning "Could not dispatch build workflow: $_"
+            }
           } else {
             Write-Host "ℹ No updates to push"
           }
