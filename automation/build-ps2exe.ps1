@@ -33,27 +33,23 @@ function Invoke-WithRetry {
         [int] $Attempts = 3,
         [int] $DelaySeconds = 2
     )
-
     for ($i = 1; $i -le $Attempts; $i++) {
         try {
             $result = & $Script
             return $result
         } catch {
             $msg = $_.Exception.Message
-            
             if ($msg -match "403|rate limit") {
                 Write-Host "⏳ GitHub API rate limit detected. Waiting 90 seconds..." -ForegroundColor Cyan
                 Start-Sleep -Seconds 90
                 continue
             }
-            
             if ($i -lt $Attempts) {
                 $wait = [math]::Min(30, $DelaySeconds * [math]::Pow(2, $i - 1))
                 $wait = $wait + (Get-Random -Minimum 0 -Maximum 3)
                 Write-Host ("Retry {0}/{1} failed: {2}. Waiting {3} seconds before retry..." -f $i, $Attempts, $msg, [int]$wait)
                 Start-Sleep -Seconds $wait
-            }
-            else {
+            } else {
                 Write-Warning ("Operation failed after {0} attempts: {1}" -f $Attempts, $msg)
                 return $null
             }
@@ -63,12 +59,9 @@ function Invoke-WithRetry {
 
 function Get-InstallerInfoFromManifest {
     param(
-        [Parameter(Mandatory = $true)]
-        [string] $PackageId,
-        [Parameter(Mandatory = $true)]
-        [string] $Version,
-        [Parameter(Mandatory = $true)]
-        [hashtable] $Headers
+        [Parameter(Mandatory = $true)][string] $PackageId,
+        [Parameter(Mandatory = $true)][string] $Version,
+        [Parameter(Mandatory = $true)][hashtable] $Headers
     )
 
     try {
@@ -149,41 +142,29 @@ if (-not (Get-Command ps2exe -ErrorAction SilentlyContinue)) {
     exit 1
 }
 
-# Normalize and validate paths (PackagesFile, OutputDir)
+# === Resolve repo root and inputs ===
 try {
     $root = (Resolve-Path "$PSScriptRoot\.." -ErrorAction Stop | Select-Object -First 1).Path
 } catch {
-    $root = (Split-Path -Parent $MyInvocation.MyCommand.Path)
+    $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 }
-
 if ($VerboseBuild.IsPresent) { Write-Host "[debug] Root resolved to: $root" -ForegroundColor DarkYellow }
 
-
-# PackagesFile: prefer explicit, else fallback to repo root packages.json
 if (-not $PackagesFile -or [string]::IsNullOrWhiteSpace($PackagesFile)) {
     $candidate = Join-Path $root 'packages.json'
-    if (Test-Path $candidate) {
-        $PackagesFile = (Resolve-Path $candidate).Path
-    }
+    if (Test-Path $candidate) { $PackagesFile = (Resolve-Path $candidate).Path }
 }
-
 if (-not $PackagesFile) {
     Write-Error "❌ Packages file not specified and no packages.json found at repo root."
     exit 1
 }
-
-try {
-    $PackagesFile = (Resolve-Path $PackagesFile -ErrorAction Stop).Path
-} catch {
+try { $PackagesFile = (Resolve-Path $PackagesFile -ErrorAction Stop).Path } catch {
     Write-Error "❌ Could not resolve PackagesFile path: $PackagesFile"
     exit 1
 }
 
-# Output defaults
 if (-not $Output -or [string]::IsNullOrWhiteSpace($Output)) { $Output = 'vcredist-aio.exe' }
-if (-not $OutputDir -or [string]::IsNullOrWhiteSpace($OutputDir)) {
-    $OutputDir = Join-Path $root 'dist'
-}
+if (-not $OutputDir -or [string]::IsNullOrWhiteSpace($OutputDir)) { $OutputDir = Join-Path $root 'dist' }
 
 try {
     New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
@@ -194,177 +175,159 @@ try {
     exit 1
 }
 
-# Load packages
-$packagesJson = Get-Content $PackagesFile -Raw | ConvertFrom-Json
-$packages = $packagesJson.packages
-
-# Create output directory
-New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
-
-# Normalize OutputDir to an absolute path to avoid relative path duplication later
+# Load packages manifest
 try {
-    $OutputDir = (Get-Item -Path $OutputDir -ErrorAction Stop).FullName
-    Write-Host "  Normalized OutputDir: $OutputDir" -ForegroundColor DarkGray
+    $packagesJson = Get-Content $PackagesFile -Raw | ConvertFrom-Json
+    $packages = $packagesJson.packages
 } catch {
-    Write-Error "❌ Failed to resolve OutputDir to full path: $OutputDir. Error: $($_.Exception.Message)"
+    Write-Error "❌ Failed to load packages.json: $($_.Exception.Message)"
     exit 1
 }
 
-# Create temporary download directory
-$downloadDir = Join-Path $OutputDir "downloads"
-New-Item -ItemType Directory -Path $downloadDir -Force | Out-Null
-
-Write-Host "📥 Downloading VCRedist packages..." -ForegroundColor Cyan
-
-$token = $env:GITHUB_TOKEN
-$headers = @{ 'User-Agent' = 'vcredist-aio-bot' }
-if ($token) { $headers.Authorization = "token $token" }
-
-$failedDownloads = @()
+# === Reuse existing packages if present, otherwise download once ===
+$packagesSubDir = Join-Path $OutputDir "packages"
+$canReusePackages = $false
 $downloadedFiles = @()
-
-foreach ($pkg in $packages) {
-    Write-Host "`n➡ Processing: $($pkg.id)"
-
-    if ([string]::IsNullOrWhiteSpace($pkg.version)) {
-        Write-Warning "⚠ No version specified, skipping..."
-        continue
-    }
-
-    Write-Host "  Version: $($pkg.version)"
-
-    $installerInfo = Get-InstallerInfoFromManifest -PackageId $pkg.id -Version $pkg.version -Headers $headers
-
-    if (-not $installerInfo) {
-        Write-Warning "⚠ Failed to get download info for: $($pkg.id)"
-        $failedDownloads += $pkg.id
-        continue
-    }
-
-    # Sanitize filename: allow only alphanumerics, dash, underscore, and dot
-    $rawFileName = "$($pkg.id.Replace('.', '_'))_$($pkg.version).exe"
-    $fileName = $rawFileName -replace '[^A-Za-z0-9._-]', '_'
-    if ($fileName -ne $rawFileName) {
-        Write-Host "  Filename sanitized: $rawFileName -> $fileName" -ForegroundColor Yellow
-    }
-    if ($fileName.Length -gt 100) {
-        $fileName = $fileName.Substring(0, 100)
-        Write-Host "  Filename truncated to 100 chars: $fileName" -ForegroundColor Yellow
-    }
-    if ($fileName -match '^[.]+$' -or [string]::IsNullOrWhiteSpace($fileName)) {
-        Write-Warning "❌ Invalid filename generated for $($pkg.id). Skipping."
-        $failedDownloads += $pkg.id
-        continue
-    }
-
-    $downloadResult = Invoke-WithRetry -Script {
-        $outputPath = Join-Path $downloadDir $fileName
-        Write-Host "    Downloading to: $fileName" -ForegroundColor DarkGray
-        Invoke-WebRequest -Uri $installerInfo.Url -OutFile $outputPath -UseBasicParsing -ErrorAction Stop
-        return $outputPath
-    } -Attempts 3 -DelaySeconds 5
-
-    if ($downloadResult -and (Test-Path $downloadResult)) {
-        # Optional: verify SHA256 if available
-        if ($installerInfo.Sha256) {
-            try {
-                $actual = (Get-FileHash -Algorithm SHA256 $downloadResult).Hash
-                if ($actual -ne $installerInfo.Sha256) {
-                    Write-Warning "  ⚠ SHA256 mismatch for $($pkg.id). Expected: $($installerInfo.Sha256) Got: $actual"
-                    Remove-Item -Path $downloadResult -Force -ErrorAction SilentlyContinue
-                    $failedDownloads += $pkg.id
-                    continue
-                } else {
-                    Write-Host "    SHA256 verified" -ForegroundColor DarkGray
+if (Test-Path $packagesSubDir) {
+    try {
+        $missing = @()
+        foreach ($pkg in $packages) {
+            if (-not $pkg.id -or -not $pkg.version) { $missing += $pkg.id; continue }
+            $rawFileName = "$($pkg.id.Replace('.', '_'))_$($pkg.version).exe"
+            $fileName = $rawFileName -replace '[^A-Za-z0-9._-]', '_'
+            $candidate = Join-Path $packagesSubDir $fileName
+            if (-not (Test-Path $candidate)) { $missing += $fileName } else {
+                $downloadedFiles += @{
+                    PackageId = $pkg.id
+                    FilePath  = (Resolve-Path $candidate).Path
+                    FileName  = $fileName
                 }
-            } catch {
-                Write-Warning "  ⚠ Failed to compute SHA256: $($_.Exception.Message)"
             }
         }
-
-        $size = (Get-Item $downloadResult).Length / 1MB
-        Write-Host "  ✔ Downloaded ($([math]::Round($size, 2)) MB)"
-        $downloadedFiles += @{
-            PackageId = $pkg.id
-            FilePath = $downloadResult
-            FileName = $fileName
+        if ($missing.Count -eq 0) {
+            Write-Host "ℹ All package files already present in: $packagesSubDir. Skipping download." -ForegroundColor Cyan
+            $canReusePackages = $true
+        } else {
+            Write-Host "ℹ Missing packages in $packagesSubDir, will download missing files." -ForegroundColor Yellow
+            $downloadedFiles = @()
         }
-    } else {
-        Write-Warning "⚠ Failed to download: $($pkg.id)"
-        $failedDownloads += $pkg.id
+    } catch {
+        Write-Warning "⚠ Failed to verify existing packages: $($_.Exception.Message)"
+        $downloadedFiles = @()
     }
 }
 
-if ($failedDownloads.Count -gt 0) {
-    Write-Warning "`n⚠ Failed to download $($failedDownloads.Count) package(s):"
-    $failedDownloads | ForEach-Object { Write-Warning "  - $_" }
-}
+if (-not $canReusePackages) {
+    $downloadDir = Join-Path $OutputDir "downloads"
+    New-Item -ItemType Directory -Path $downloadDir -Force | Out-Null
+    Write-Host "📥 Downloading VCRedist packages..." -ForegroundColor Cyan
 
-if ($downloadedFiles.Count -eq 0) {
-    Write-Error "❌ No packages downloaded. Build failed."
-    exit 1
+    $token = $env:GITHUB_TOKEN
+    $headers = @{ 'User-Agent' = 'vcredist-aio-bot' }
+    if ($token) { $headers.Authorization = "token $token" }
+
+    $failedDownloads = @()
+    foreach ($pkg in $packages) {
+        Write-Host "`n➡ Processing: $($pkg.id)"
+        if ([string]::IsNullOrWhiteSpace($pkg.version)) {
+            Write-Warning "⚠ No version specified, skipping..."
+            continue
+        }
+        Write-Host "  Version: $($pkg.version)"
+        $installerInfo = Get-InstallerInfoFromManifest -PackageId $pkg.id -Version $pkg.version -Headers $headers
+        if (-not $installerInfo) {
+            Write-Warning "⚠ Failed to get download info for: $($pkg.id)"
+            $failedDownloads += $pkg.id
+            continue
+        }
+        $rawFileName = "$($pkg.id.Replace('.', '_'))_$($pkg.version).exe"
+        $fileName = $rawFileName -replace '[^A-Za-z0-9._-]', '_'
+        if ($fileName.Length -gt 120) { $fileName = $fileName.Substring(0,120) }
+        $outputPath = Join-Path $downloadDir $fileName
+        Write-Host "    Downloading to: $fileName" -ForegroundColor DarkGray
+
+        $downloadResult = Invoke-WithRetry -Script {
+            Invoke-WebRequest -Uri $installerInfo.Url -OutFile $outputPath -UseBasicParsing -ErrorAction Stop
+            return $outputPath
+        } -Attempts 3 -DelaySeconds 5
+
+        if ($downloadResult -and (Test-Path $downloadResult)) {
+            if ($installerInfo.Sha256) {
+                try {
+                    $actual = (Get-FileHash -Algorithm SHA256 $downloadResult).Hash
+                    if ($actual -ne $installerInfo.Sha256) {
+                        Write-Warning "  ⚠ SHA256 mismatch for $($pkg.id). Expected: $($installerInfo.Sha256) Got: $actual"
+                        Remove-Item -Path $downloadResult -Force -ErrorAction SilentlyContinue
+                        $failedDownloads += $pkg.id
+                        continue
+                    } else {
+                        Write-Host "    SHA256 verified" -ForegroundColor DarkGray
+                    }
+                } catch {
+                    Write-Warning "  ⚠ Failed to compute SHA256: $($_.Exception.Message)"
+                }
+            }
+            $size = (Get-Item $downloadResult).Length / 1MB
+            Write-Host "  ✔ Downloaded ($([math]::Round($size, 2)) MB)"
+            $downloadedFiles += @{
+                PackageId = $pkg.id
+                FilePath  = $downloadResult
+                FileName  = $fileName
+            }
+        } else {
+            Write-Warning "⚠ Failed to download: $($pkg.id)"
+            $failedDownloads += $pkg.id
+        }
+    }
+
+    if ($failedDownloads.Count -gt 0) {
+        Write-Warning "`n⚠ Failed to download $($failedDownloads.Count) package(s):"
+        $failedDownloads | ForEach-Object { Write-Warning "  - $_" }
+    }
+    if ($downloadedFiles.Count -eq 0) {
+        Write-Error "❌ No packages downloaded. Build failed."
+        exit 1
+    }
+
+    # create packages dir and copy
+    New-Item -ItemType Directory -Path $packagesSubDir -Force | Out-Null
+    foreach ($file in $downloadedFiles) {
+        Copy-Item -Path $file.FilePath -Destination (Join-Path $packagesSubDir $file.FileName) -Force
+        $file.FilePath = (Join-Path $packagesSubDir $file.FileName)
+    }
+
+    # cleanup temporary downloads
+    try { if (Test-Path $downloadDir) { Remove-Item -Path $downloadDir -Recurse -Force -ErrorAction SilentlyContinue } } catch {}
 }
 
 Write-Host "`n📦 Downloaded $($downloadedFiles.Count) packages"
 
-# Create packages subfolder
-$packagesSubDir = Join-Path $OutputDir "packages"
-New-Item -ItemType Directory -Path $packagesSubDir -Force | Out-Null
-
-Write-Host "`n📋 Creating package bundle..." -ForegroundColor Cyan
-
-foreach ($file in $downloadedFiles) {
-    Copy-Item -Path $file.FilePath -Destination (Join-Path $packagesSubDir $file.FileName) -Force
-    $size = (Get-Item $file.FilePath).Length / 1MB
-    Write-Host "  ✔ $($file.FileName) ($([math]::Round($size, 2)) MB)"
+# === Stage payload ===
+$automationDir = Join-Path $root 'automation'
+$stage = Join-Path $automationDir 'stage-ps2exe'
+$payloadDir = Join-Path $stage 'payload'
+try {
+    if (Test-Path $stage) { Remove-Item -Path $stage -Recurse -Force -ErrorAction SilentlyContinue }
+    New-Item -ItemType Directory -Path $payloadDir -Force | Out-Null
+} catch {
+    Write-Error "❌ Failed to create staging directories: $($_.Exception.Message)"
+    exit 1
 }
 
-Write-Host "✔ Packages bundled ($($downloadedFiles.Count) files)"
-
-# Ensure all Join-Path inputs are explicitly strings to avoid array issues
-$root = (Resolve-Path "$PSScriptRoot\.." -ErrorAction Stop | Select-Object -First 1).Path
-$auto = [string](Join-Path -Path $root -ChildPath 'automation')
-$stage = [string](Join-Path -Path $auto -ChildPath 'stage-ps2exe')
-
-# Clean stage
-if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
-New-Item $stage -ItemType Directory | Out-Null
-
-Write-Host "Locating source scripts and packages..."
-
-if ($VerboseBuild.IsPresent) { Write-Host "[debug] automation dir: $auto" -ForegroundColor DarkYellow }
-if ($VerboseBuild.IsPresent) { Write-Host "[debug] stage dir: $stage" -ForegroundColor DarkYellow }
-
-# Find install/uninstall from several candidate locations and resolve to absolute paths.
-# Use Resolve-Path to guarantee full-path strings (prevents erroneous array/relative results).
+# Resolve install/uninstall script paths
 $installCandidatePaths = @(
-    "$root\automation\install.ps1",
-    "$root\install.ps1"
+    Join-Path -Path $root -ChildPath 'automation\install.ps1',
+    Join-Path -Path $root -ChildPath 'install.ps1'
 )
-
 $uninstallCandidatePaths = @(
-    "$root\automation\uninstall.ps1",
-    "$root\uninstall.ps1"
+    Join-Path -Path $root -ChildPath 'automation\uninstall.ps1',
+    Join-Path -Path $root -ChildPath 'uninstall.ps1'
 )
 
 $installCandidates = @()
-foreach ($p in $installCandidatePaths) {
-    if (Test-Path $p) {
-        try { $installCandidates += (Resolve-Path $p -ErrorAction Stop).Path } catch { }
-    }
-}
-
+foreach ($p in $installCandidatePaths) { if (Test-Path $p) { try { $installCandidates += (Resolve-Path $p -ErrorAction Stop).Path } catch {} } }
 $uninstallCandidates = @()
-foreach ($p in $uninstallCandidatePaths) {
-    if (Test-Path $p) {
-        try { $uninstallCandidates += (Resolve-Path $p -ErrorAction Stop).Path } catch { }
-    }
-}
-
-if ($VerboseBuild.IsPresent) { Write-Host "[debug] install candidate paths: $($installCandidatePaths -join ', ')" -ForegroundColor DarkYellow }
-if ($VerboseBuild.IsPresent) { Write-Host "[debug] uninstall candidate paths: $($uninstallCandidatePaths -join ', ')" -ForegroundColor DarkYellow }
-if ($VerboseBuild.IsPresent) { Write-Host "[debug] resolved install candidates: $($installCandidates -join ', ')" -ForegroundColor DarkYellow }
-if ($VerboseBuild.IsPresent) { Write-Host "[debug] resolved uninstall candidates: $($uninstallCandidates -join ', ')" -ForegroundColor DarkYellow }
+foreach ($p in $uninstallCandidatePaths) { if (Test-Path $p) { try { $uninstallCandidates += (Resolve-Path $p -ErrorAction Stop).Path } catch {} } }
 
 if ($installCandidates.Count -eq 0 -or $uninstallCandidates.Count -eq 0) {
     Write-Error "❌ Could not find install.ps1 or uninstall.ps1 in expected locations."
@@ -375,32 +338,19 @@ if ($installCandidates.Count -eq 0 -or $uninstallCandidates.Count -eq 0) {
 
 $installSource = $installCandidates[0]
 $uninstallSource = $uninstallCandidates[0]
-
-# Debug: print resolved source paths to aid CI troubleshooting
-if ($VerboseBuild.IsPresent) { Write-Host "Resolved installSource: $installSource" -ForegroundColor Yellow }
-if ($VerboseBuild.IsPresent) { Write-Host "Resolved uninstallSource: $uninstallSource" -ForegroundColor Yellow }
-
-# Find packages directory (try repo packages/, dist/packages, automation/packages)
-
-$pkgCandidates = @(
-  [string](Join-Path -Path $root -ChildPath 'packages'),
-  [string](Join-Path -Path $root -ChildPath 'dist/packages'),
-  [string](Join-Path -Path $auto -ChildPath 'packages')
-) | Where-Object { Test-Path $_ }
-
-$packagesDir = $pkgCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-
-if (-not $packagesDir) {
-  Write-Warning "No packages directory found. The EXE will not include package binaries."
-}
-
-Write-Host "Staging and collecting payload files..."
-
-$payloadDir = Join-Path $stage "payload"
-New-Item $payloadDir -ItemType Directory | Out-Null
+if ($VerboseBuild.IsPresent) { Write-Host "[debug] Resolved installSource: $installSource"; Write-Host "[debug] Resolved uninstallSource: $uninstallSource" }
 
 Copy-Item -Path $installSource -Destination (Join-Path $payloadDir "install.ps1") -Force
 Copy-Item -Path $uninstallSource -Destination (Join-Path $payloadDir "uninstall.ps1") -Force
+Write-Host "[debug] Copied install/uninstall to payload dir" -ForegroundColor DarkGray
+
+# Copy packages into payload/packages
+$payloadPackagesDir = Join-Path $payloadDir 'packages'
+New-Item -ItemType Directory -Path $payloadPackagesDir -Force | Out-Null
+foreach ($f in Get-ChildItem -Path $packagesSubDir -File) {
+    Copy-Item -Path $f.FullName -Destination (Join-Path $payloadPackagesDir $f.Name) -Force
+    if ($VerboseBuild.IsPresent) { Write-Host "[debug] payload: packages\$($f.Name) -> $(Join-Path $payloadPackagesDir $f.Name)" -ForegroundColor DarkGray }
+}
 
 if ($VerboseBuild.IsPresent) { Write-Host "[debug] Copied install/uninstall to payload dir" }
 
@@ -499,24 +449,37 @@ Write-Host "Building EXE (PS2EXE)..."
 
 $iconPath = Join-Path $root "icon.ico"
 if (-not (Test-Path $iconPath)) { $iconPath = $null }
+$exeFullPath = Join-Path $OutputDir $Output
 
-$noConsole = if ($VerboseBuild.IsPresent) { 'False' } else { 'True' }
+# Prefer the cmdlet interface provided by the ps2exe module
+if (-not (Get-Command Invoke-ps2exe -ErrorAction SilentlyContinue)) {
+    Write-Error "❌ PS2EXE cmdlet 'Invoke-ps2exe' not found. Ensure 'Install-Module ps2exe -Scope CurrentUser' ran successfully in CI."
+    exit 1
+}
 
-$cmd = @"
-ps2exe `
-  -inputFile `"$bootstrapFile`" `
-  -outputFile `"$Output`" `
-"@
+$noConsoleBool = -not $VerboseBuild.IsPresent
+$invokeParams = @{
+    inputFile  = $bootstrapFile
+    outputFile = $exeFullPath
+    noConsole  = $noConsoleBool
+    title      = 'VC Redist AIO'
+    description= 'All-in-one VC Redist installer'
+}
+if ($iconPath -and (Test-Path $iconPath)) { $invokeParams.iconFile = $iconPath }
 
-if ($iconPath) { $cmd += "  -iconFile `"$iconPath`" `n" }
-$cmd += "  -noConsole:$noConsole `n  -title `"VC Redist AIO`" `n  -description `"All-in-one VC Redist installer`""
+if ($VerboseBuild.IsPresent) {
+    Write-Host "[debug] Invoking Invoke-ps2exe with parameters:" -ForegroundColor DarkYellow
+    $invokeParams.GetEnumerator() | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+}
 
-Invoke-Expression $cmd
-
-if ($VerboseBuild.IsPresent) { Write-Host "[debug] PS2EXE invoked with command:" -ForegroundColor DarkYellow }
-if ($VerboseBuild.IsPresent) { Write-Host $cmd -ForegroundColor DarkGray }
-
-Write-Host "Build complete. Output: $Output"
+try {
+    Invoke-ps2exe @invokeParams
+    Write-Host "Build complete. Output: $exeFullPath" -ForegroundColor Green
+} catch {
+    Write-Error "❌ PS2EXE build failed: $($_.Exception.Message)"
+    if ($VerboseBuild.IsPresent) { Write-Host $_.Exception.StackTrace -ForegroundColor DarkGray }
+    exit 1
+}
 
 ### ---- CLEAN UP ----
 try {

@@ -17,7 +17,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install PS2EXE
+      - name: Install PS2EXE module
         shell: pwsh
         run: |
           Install-Module ps2exe -Scope CurrentUser -Force
@@ -33,60 +33,24 @@ jobs:
             Write-Error "uninstall.ps1 is missing. Ensure it is committed to the repository."
             exit 1
           }
-
-      - name: Ensure packages.json is present
-        shell: pwsh
-        run: |
           if (-not (Test-Path ./packages.json)) {
             Write-Error "packages.json is missing. Ensure it is committed to the repository."
             exit 1
           }
 
-      - name: Debug workspace
+      - name: Debug workspace (optional)
         shell: pwsh
         run: |
           Write-Host "Current directory contents:"
           Get-ChildItem -Recurse
 
-      - name: Debug packages.json path
+      - name: Build EXE using PS2EXE (single downloader)
+        id: build
         shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $packagesFile = (Resolve-Path ./packages.json).Path
-          Write-Host "Resolved packages.json path: $packagesFile"
-
-      # NOTE: package preparation is handled inside build-ps2exe.ps1 (it will reuse dist/packages if present)
-
-      - name: Debug PowerShell Context
-        shell: pwsh
-        run: |
-          Write-Host "PowerShell Version:"
-          $PSVersionTable
-          Write-Host "Current Directory:"
-          Get-Location
-
-      - name: Debug build-ps2exe.ps1
-        shell: pwsh
-        run: |
-          Write-Host "Contents of build-ps2exe.ps1:"
-          Get-Content ./automation/build-ps2exe.ps1 -Head 20
-
-      - name: "Fail-fast: verify required build inputs"
-        shell: pwsh
-        run: |
-          Write-Host "Checking required files for build..."
-          $required = @("automation/build-ps2exe.ps1","automation/install.ps1","automation/uninstall.ps1","packages.json")
-          $missing = @()
-          foreach ($r in $required) { if (-not (Test-Path $r)) { $missing += $r } }
-          if ($missing.Count -gt 0) {
-            Write-Error "Missing required files: $($missing -join ', ')"
-            exit 1
-          }
-          Write-Host "All required files present"
-
-      - name: Build EXE using PS2EXE
-        shell: pwsh
-        run: |
-          Write-Host "Running PS2EXE build script..."
+          Write-Host "Running PS2EXE build script (will download packages if needed)..."
           $scriptPath = (Resolve-Path ./automation/build-ps2exe.ps1).Path
           $packagesFile = (Resolve-Path ./packages.json).Path
           $outputDir = (Resolve-Path ./dist -ErrorAction SilentlyContinue).Path
@@ -98,12 +62,12 @@ jobs:
         id: compute-metadata
         shell: pwsh
         run: |
+          if (-not (Test-Path dist/vcredist-aio.exe)) { Write-Host "noexe=1" >> $env:GITHUB_OUTPUT; exit 0 }
           $exePath = (Resolve-Path ./dist/vcredist-aio.exe -ErrorAction Stop).Path
           $hash = (Get-FileHash -Algorithm SHA256 -Path $exePath).Hash
           $short = $hash.Substring(0,12)
           $sizeBytes = (Get-Item $exePath).Length
           $sizeMB = [math]::Round($sizeBytes / 1MB, 2)
-          # Expose values to subsequent steps / jobs
           Write-Host "exe_sha=$hash" >> $env:GITHUB_OUTPUT
           Write-Host "exe_sha_short=$short" >> $env:GITHUB_OUTPUT
           Write-Host "exe_size_bytes=$sizeBytes" >> $env:GITHUB_OUTPUT
@@ -111,52 +75,32 @@ jobs:
           Write-Host "exe_path=$exePath" >> $env:GITHUB_OUTPUT
           Write-Host "Computed EXE metadata: SHA256=$hash, Size=${sizeMB}MB"
 
-      - name: List `dist` contents (debug)
-        shell: pwsh
-        run: |
-          Write-Host "Contents of ./dist:" 
-          if (Test-Path ./dist) { Get-ChildItem ./dist -Recurse | ForEach-Object { Write-Host $_.FullName } } else { Write-Host "(missing)" }
-
-      - name: Validate build artifacts
-        shell: pwsh
-        run: |
-          $files = @('dist/vcredist-aio.exe', 'dist/SHA256.txt')
-          foreach ($f in $files) {
-            if (-not (Test-Path $f)) {
-              Write-Error "Required artifact missing: $f"
-              exit 1
-            }
-          }
-          Write-Host "✔ All required artifacts present"
-
       - name: Upload SHA256SUMS.txt as artifact
-        if: always()
+        if: steps.compute-metadata.outputs.noexe != '1'
         uses: actions/upload-artifact@v4
         with:
           name: SHA256SUMS
           path: dist/SHA256SUMS.txt
           if-no-files-found: error
 
-      - name: Read SHA256SUMS into output
-        id: read-sums
-        shell: pwsh
-        run: |
-          $sumsPath = (Resolve-Path ./dist/SHA256SUMS.txt -ErrorAction Stop).Path
-          $content = Get-Content -Raw -Path $sumsPath
-          # Set multiline output 'sums'
-          Write-Host "sums<<EOF" >> $env:GITHUB_OUTPUT
-          Write-Host $content >> $env:GITHUB_OUTPUT
-          Write-Host "EOF" >> $env:GITHUB_OUTPUT
+      - name: Upload EXE and checksum bundle
+        if: steps.compute-metadata.outputs.noexe != '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: vcredist-aio
+          path: |
+            dist/vcredist-aio.exe
+            dist/SHA256.txt
+          if-no-files-found: error
 
-      - name: Create Release (attach EXE + SHA256SUMS)
-        if: always()
+      - name: Create Release (with EXE metadata)
+        if: steps.compute-metadata.outputs.noexe != '1'
         uses: softprops/action-gh-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          # Prefer computed short SHA, fallback to run number when empty
-          tag_name: vcredist-aio-${{ steps.compute-metadata.outputs.exe_sha_short || github.run_number }}
-          name: VCRedist AIO ${{ steps.compute-metadata.outputs.exe_sha_short || github.run_number }}
+          tag_name: vcredist-aio-${{ github.run_number }}-${{ steps.compute-metadata.outputs.exe_sha_short }}
+          name: VCRedist AIO ${{ steps.compute-metadata.outputs.exe_sha_short }}
           files: |
             dist/vcredist-aio.exe
             dist/SHA256SUMS.txt
@@ -166,14 +110,7 @@ jobs:
             - SHA256: ${{ steps.compute-metadata.outputs.exe_sha }}
             - Size: ${{ steps.compute-metadata.outputs.exe_size_mb }} MB
 
-            ### SHA256SUMS
-            ${{ steps.read-sums.outputs.sums }}
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: vcredist-aio
-          path: |
-            dist/vcredist-aio.exe
-            dist/SHA256.txt
-          if-no-files-found: error
+      - name: Final status
+        shell: pwsh
+        run: |
+          if (Test-Path dist/vcredist-aio.exe) { Write-Host "Build succeeded and artifacts uploaded." } else { Write-Host "Build did not produce EXE; check logs."; exit 1 }
