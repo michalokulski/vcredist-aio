@@ -2,55 +2,55 @@
   "packages": [
     {
       "id": "Microsoft.VCRedist.2005.x86",
-      "version": ""
+      "version": "8.0.61001"
     },
     {
       "id": "Microsoft.VCRedist.2005.x64",
-      "version": ""
+      "version": "8.0.61000"
     },
     {
       "id": "Microsoft.VCRedist.2008.x86",
-      "version": ""
+      "version": "9.0.30729.6161"
     },
     {
       "id": "Microsoft.VCRedist.2008.x64",
-      "version": ""
+      "version": "9.0.30729.6161"
     },
     {
       "id": "Microsoft.VCRedist.2010.x86",
-      "version": ""
+      "version": "10.0.40219"
     },
     {
       "id": "Microsoft.VCRedist.2010.x64",
-      "version": ""
+      "version": "10.0.40219"
     },
     {
       "id": "Microsoft.VCRedist.2012.x86",
-      "version": ""
+      "version": "11.0.61030.0"
     },
     {
       "id": "Microsoft.VCRedist.2012.x64",
-      "version": ""
+      "version": "11.0.61030.0"
     },
     {
       "id": "Microsoft.VCRedist.2013.x86",
-      "version": ""
+      "version": "12.0.40664.0"
     },
     {
       "id": "Microsoft.VCRedist.2013.x64",
-      "version": ""
+      "version": "12.0.40664.0"
     },
     {
       "id": "Microsoft.VCRedist.2015Plus.x86",
-      "version": ""
+      "version": "14.50.35719.0"
     },
     {
       "id": "Microsoft.VCRedist.2015Plus.x64",
-      "version": ""
+      "version": "14.50.35719.0"
     },
     {
       "id": "Microsoft.VSTOR",
-      "version": ""
+      "version": "10.0.60917"
     }
   ]
 }
