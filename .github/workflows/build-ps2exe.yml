@@ -6,13 +6,27 @@ permissions:
 on:
   push:
     branches: [ main ]
+    paths:
+      - 'packages.json'
+      - 'automation/**'
   pull_request:
     branches: [ main ]
   workflow_dispatch:
+    inputs:
+      force_release:
+        description: 'Force create a release even if no version change'
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 60
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -62,17 +76,20 @@ jobs:
         id: compute-metadata
         shell: pwsh
         run: |
-          if (-not (Test-Path dist/vcredist-aio.exe)) { Write-Host "noexe=1" >> $env:GITHUB_OUTPUT; exit 0 }
+          if (-not (Test-Path dist/vcredist-aio.exe)) {
+            Add-Content -Path $env:GITHUB_OUTPUT -Value "noexe=1"
+            exit 0
+          }
           $exePath = (Resolve-Path ./dist/vcredist-aio.exe -ErrorAction Stop).Path
           $hash = (Get-FileHash -Algorithm SHA256 -Path $exePath).Hash
           $short = $hash.Substring(0,12)
           $sizeBytes = (Get-Item $exePath).Length
           $sizeMB = [math]::Round($sizeBytes / 1MB, 2)
-          Write-Host "exe_sha=$hash" >> $env:GITHUB_OUTPUT
-          Write-Host "exe_sha_short=$short" >> $env:GITHUB_OUTPUT
-          Write-Host "exe_size_bytes=$sizeBytes" >> $env:GITHUB_OUTPUT
-          Write-Host "exe_size_mb=$sizeMB" >> $env:GITHUB_OUTPUT
-          Write-Host "exe_path=$exePath" >> $env:GITHUB_OUTPUT
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "exe_sha=$hash"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "exe_sha_short=$short"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "exe_size_bytes=$sizeBytes"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "exe_size_mb=$sizeMB"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "exe_path=$exePath"
           Write-Host "Computed EXE metadata: SHA256=$hash, Size=${sizeMB}MB"
 
       - name: Create ZIP package (standalone script)
@@ -160,10 +177,11 @@ jobs:
             dist/vcredist-aio.exe
             artifact/SHA256SUMS.txt
           if-no-files-found: error
+          retention-days: 30
 
       - name: Create Release
-        if: steps.compute-metadata.outputs.noexe != '1'
-        uses: softprops/action-gh-release@v1
+        if: steps.compute-metadata.outputs.noexe != '1' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -176,6 +194,8 @@ jobs:
             artifact/SHA256SUMS.txt
           draft: false
           prerelease: false
+          make_latest: true
+          fail_on_unmatched_files: true
 
       - name: Final status
         shell: pwsh

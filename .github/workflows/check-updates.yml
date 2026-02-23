@@ -8,9 +8,14 @@ on:
     - cron: "0 2 * * *"
   workflow_dispatch:
 
+concurrency:
+  group: check-updates
+  cancel-in-progress: false
+
 jobs:
   check-updates:
     runs-on: windows-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -19,19 +24,22 @@ jobs:
           persist-credentials: true
 
       - name: Check for updates
+        shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          pwsh -File automation/update-check.ps1 `
+          & ./automation/update-check.ps1 `
             -PackagesFile packages.json `
             -UpdateBranchPrefix update
 
       - name: Configure git
+        shell: pwsh
         run: |
           git config --global user.name "github-actions"
           git config --global user.email "actions@github.com"
 
       - name: Push update branch and trigger build
+        shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

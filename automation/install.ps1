@@ -2,7 +2,8 @@
 .SYNOPSIS
     VCRedist AIO Offline Installer - Installation Engine
 .DESCRIPTION
-    Installs Microsoft Visual C++ Redistributables with comprehensive logging and validation.
+    Installs Microsoft Visual C++ Redistributables with smart skip logic,
+    architecture detection, comprehensive logging and validation.
 .PARAMETER PackageDir
     Directory containing the redistributable executables
 .PARAMETER LogDir
@@ -13,30 +14,42 @@
     Skip pre-installation validation checks
 .PARAMETER PackageFilter
     Array of years to filter packages (e.g., "2022", "2019", "2015", "2013")
+.PARAMETER ForceReinstall
+    Reinstall even if already installed (overrides smart skip)
+.PARAMETER ShowInstallerWindows
+    Show installer UI windows (default: hidden)
 #>
 
 param(
     [Parameter(Mandatory = $false)]
     [string] $PackageDir,
-    
+
     [Parameter(Mandatory = $false)]
     [string] $LogDir,
-    
+
     [Parameter(Mandatory = $false)]
     [string[]] $PackageFilter,
-    
-    [switch] $Silent = $false,
-    
-    [switch] $SkipValidation = $false,
 
-    # By default, hide installer windows for all packages. Use -ShowInstallerWindows to opt-in to visible UI.
+    [switch] $Silent = $false,
+    [switch] $SkipValidation = $false,
+    [switch] $ForceReinstall = $false,
     [switch] $ShowInstallerWindows = $false
 )
 
 $ErrorActionPreference = "Continue"
 $WarningPreference = "Continue"
 
-# Resolve script directory for default paths
+# ============================================================================
+# ARCHITECTURE DETECTION
+# ============================================================================
+
+$script:OSArch = if ([Environment]::Is64BitOperatingSystem) { "x64" } else { "x86" }
+$script:IsWow64 = [Environment]::Is64BitOperatingSystem
+
+# ============================================================================
+# PATH RESOLUTION
+# ============================================================================
+
 $scriptDir = $PSScriptRoot
 if ([string]::IsNullOrWhiteSpace($scriptDir)) {
     $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -45,12 +58,10 @@ if ([string]::IsNullOrWhiteSpace($scriptDir)) {
     $scriptDir = Get-Location
 }
 
-# Set default paths if not provided
 if ([string]::IsNullOrWhiteSpace($PackageDir)) {
     $PackageDir = Join-Path $scriptDir "packages"
 }
 
-# Normalize package filter input (support comma-separated string from NSIS)
 if ($PackageFilter) {
     $PackageFilter = @(
         $PackageFilter | ForEach-Object { ($_ -split '\s*,\s*') } |
@@ -58,27 +69,15 @@ if ($PackageFilter) {
     )
 }
 
-# Strip surrounding quotes from LogDir if present
-if ($LogDir -match '^("|)(.*)(\1)$') {
-    $LogDir = $Matches[2]
-}
-# Handle log directory - ONLY use custom path if explicitly specified
+if ($LogDir -match '^("|)(.*)(\1)$') { $LogDir = $Matches[2] }
+
 if ([string]::IsNullOrWhiteSpace($LogDir)) {
-    # No custom log directory - use TEMP as default
     $LogDir = $env:TEMP
 } else {
-    # Custom log directory specified - validate and create if needed
     if (-not (Test-Path $LogDir)) {
         try {
             New-Item -ItemType Directory -Path $LogDir -Force -ErrorAction Stop | Out-Null
-            if (-not $Silent) {
-                Write-Host "✔ Created log directory: $LogDir" -ForegroundColor Green
-            }
         } catch {
-            if (-not $Silent) {
-                Write-Warning "Failed to create custom log directory: $($_.Exception.Message)"
-                Write-Warning "Falling back to TEMP: $env:TEMP"
-            }
             $LogDir = $env:TEMP
         }
     }
@@ -92,61 +91,28 @@ $script:LogFile = Join-Path $LogDir "vcredist-install-$(Get-Date -Format 'yyyyMM
 $script:InstallStartTime = Get-Date
 $script:RebootRequired = $false
 
-# Validate log file can be created
 try {
-    # Test write to log file
     "Installation started at: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" | Out-File -FilePath $script:LogFile -Encoding UTF8 -ErrorAction Stop
 } catch {
-    if (-not $Silent) {
-        Write-Error "CRITICAL: Cannot create log file at: $script:LogFile"
-        Write-Error "Error: $($_.Exception.Message)"
-        Write-Host "Log directory: $LogDir" -ForegroundColor Yellow
-        Write-Host "Attempting emergency fallback to TEMP..." -ForegroundColor Yellow
-    }
-    
-    # Emergency fallback
     $LogDir = $env:TEMP
     $script:LogFile = Join-Path $LogDir "vcredist-install-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
-    
     try {
         "Installation started at: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" | Out-File -FilePath $script:LogFile -Encoding UTF8 -ErrorAction Stop
-        if (-not $Silent) {
-            Write-Host "Emergency fallback successful. Log file: $script:LogFile" -ForegroundColor Green
-        }
     } catch {
         Write-Error "FATAL: Cannot create log file even in TEMP directory!"
-        Write-Error "Installation cannot proceed without logging capability."
         exit 1
     }
 }
 
 function Write-Log {
     param(
-        [Parameter(Mandatory = $true)]
-        [string] $Message,
-        
-        [Parameter(Mandatory = $false)]
-        [ValidateSet('INFO', 'WARN', 'ERROR', 'SUCCESS', 'DEBUG')]
-        [string] $Level = 'INFO',
-        
+        [Parameter(Mandatory = $true)] [string] $Message,
+        [ValidateSet('INFO','WARN','ERROR','SUCCESS','DEBUG')] [string] $Level = 'INFO',
         [switch] $NoConsole
     )
-    
     $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
     $logEntry = "[$timestamp] [$Level] $Message"
-    
-    # Write to log file with error handling
-    try {
-        Add-Content -Path $script:LogFile -Value $logEntry -ErrorAction Stop
-    } catch {
-        # If log writing fails, try to write to console at least
-        if (-not $Silent) {
-            Write-Host "[LOG ERROR] Failed to write to log file: $($_.Exception.Message)" -ForegroundColor Red
-            Write-Host "[LOG ERROR] Log path was: $script:LogFile" -ForegroundColor Red
-        }
-    }
-    
-    # Write to console unless suppressed
+    try { Add-Content -Path $script:LogFile -Value $logEntry -ErrorAction Stop } catch {}
     if (-not $NoConsole -and -not $Silent) {
         $color = switch ($Level) {
             'ERROR'   { 'Red' }
@@ -160,28 +126,172 @@ function Write-Log {
 }
 
 function Write-LogBlank {
-    param(
-        [switch] $NoConsole
-    )
-    try {
-        Add-Content -Path $script:LogFile -Value "" -ErrorAction Stop
-    } catch {
-        if (-not $Silent) {
-            Write-Host "[LOG ERROR] Failed to write blank line to log file: $($_.Exception.Message)" -ForegroundColor Red
-        }
-    }
-    if (-not $NoConsole -and -not $Silent) {
-        Write-Host ""
-    }
+    try { Add-Content -Path $script:LogFile -Value "" -ErrorAction Stop } catch {}
+    if (-not $Silent) { Write-Host "" }
 }
 
 function Write-LogHeader {
     param([string] $Title)
-    
     $separator = "=" * 80
-    Write-Log $separator -Level INFO
-    Write-Log $Title -Level INFO
-    Write-Log $separator -Level INFO
+    Write-Log $separator
+    Write-Log $Title
+    Write-Log $separator
+}
+
+# ============================================================================
+# INSTALLED PACKAGE DETECTION (Smart Skip)
+# ============================================================================
+
+# Known VC++ Redistributable upgrade codes / product name patterns
+# Used to detect already-installed packages and skip them
+$script:InstalledVCCache = $null
+
+function Get-InstalledVCRedistMap {
+    <#
+    .SYNOPSIS
+        Builds a hashtable of installed VC++ redistributables keyed by
+        a normalized "year+arch" string, e.g. "2015Plus_x64".
+        Returns the map so callers can do O(1) lookups.
+    #>
+    if ($script:InstalledVCCache) { return $script:InstalledVCCache }
+
+    $map = @{}
+
+    $regPaths = @(
+        "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    )
+
+    foreach ($path in $regPaths) {
+        try {
+            $items = Get-ItemProperty $path -ErrorAction SilentlyContinue
+            foreach ($item in $items) {
+                $name = $item.DisplayName
+                if (-not $name) { continue }
+                if ($name -notmatch "Microsoft Visual C\+\+") { continue }
+
+                # Determine year bucket
+                $yearKey = $null
+                switch -Regex ($name) {
+                    "2005"      { $yearKey = "2005" }
+                    "2008"      { $yearKey = "2008" }
+                    "2010"      { $yearKey = "2010" }
+                    "2012"      { $yearKey = "2012" }
+                    "2013"      { $yearKey = "2013" }
+                    "201[5-9]|202[0-9]" { $yearKey = "2015Plus" }
+                }
+                if (-not $yearKey) { continue }
+
+                # Determine architecture
+                $archKey = if ($name -match "\(x64\)|x64") { "x64" }
+                           elseif ($name -match "\(x86\)|x86|32.bit") { "x86" }
+                           elseif ($path -match "Wow6432Node") { "x86" }
+                           else { "x64" }
+
+                $key = "${yearKey}_${archKey}"
+                $installedVer = $item.DisplayVersion
+
+                # Keep the highest version found for this key
+                if (-not $map.ContainsKey($key) -or
+                    (Compare-VersionString $installedVer $map[$key].Version) -gt 0) {
+                    $map[$key] = @{
+                        Version     = $installedVer
+                        DisplayName = $name
+                    }
+                }
+            }
+        } catch { }
+    }
+
+    $script:InstalledVCCache = $map
+    return $map
+}
+
+function Compare-VersionString {
+    param([string]$A, [string]$B)
+    try {
+        $va = [version]($A -replace '[^0-9.]','')
+        $vb = [version]($B -replace '[^0-9.]','')
+        return $va.CompareTo($vb)
+    } catch {
+        return [string]::Compare($A, $B)
+    }
+}
+
+function Get-PackageYearArchKey {
+    <#
+    .SYNOPSIS
+        Derives the "year+arch" lookup key from a package filename.
+        e.g. "Microsoft_VCRedist_2015Plus_x64_14.40.33816.0.exe" -> "2015Plus_x64"
+    #>
+    param([string]$FileName)
+
+    $yearKey = $null
+    switch -Regex ($FileName) {
+        "2005"      { $yearKey = "2005" }
+        "2008"      { $yearKey = "2008" }
+        "2010"      { $yearKey = "2010" }
+        "2012"      { $yearKey = "2012" }
+        "2013"      { $yearKey = "2013" }
+        "2015Plus"  { $yearKey = "2015Plus" }
+    }
+
+    $archKey = if ($FileName -match "x64") { "x64" } else { "x86" }
+
+    if ($yearKey) { return "${yearKey}_${archKey}" }
+    return $null
+}
+
+function Test-PackageAlreadyInstalled {
+    <#
+    .SYNOPSIS
+        Returns $true if the package is already installed at the same or newer version.
+    #>
+    param(
+        [hashtable] $Package,
+        [hashtable] $InstalledMap
+    )
+
+    $key = Get-PackageYearArchKey -FileName $Package.FileName
+    if (-not $key) { return $false }
+    if (-not $InstalledMap.ContainsKey($key)) { return $false }
+
+    $installedEntry = $InstalledMap[$key]
+
+    # Extract version from filename: last segment before .exe
+    $verMatch = [regex]::Match($Package.FileName, '(\d+\.\d+[\.\d]*)\.exe$')
+    if (-not $verMatch.Success) { return $false }
+
+    $pkgVersion = $verMatch.Groups[1].Value
+    $cmp = Compare-VersionString $installedEntry.Version $pkgVersion
+
+    if ($cmp -ge 0) {
+        Write-Log "  [SKIP] Already installed: $($installedEntry.DisplayName) v$($installedEntry.Version) >= v$pkgVersion" -Level INFO
+        return $true
+    }
+
+    Write-Log "  [UPGRADE] Installed v$($installedEntry.Version) < package v$pkgVersion — will upgrade" -Level INFO
+    return $false
+}
+
+# ============================================================================
+# ARCHITECTURE FILTERING
+# ============================================================================
+
+function Test-PackageArchCompatible {
+    <#
+    .SYNOPSIS
+        Returns $true if the package architecture is compatible with the OS.
+        On x86 OS: skip x64 packages.
+        On x64 OS: install both x86 and x64 (x86 needed for 32-bit apps).
+    #>
+    param([hashtable] $Package)
+
+    if ($Package.FileName -match "x64" -and -not $script:IsWow64) {
+        Write-Log "  [SKIP] x64 package skipped on 32-bit OS" -Level INFO
+        return $false
+    }
+    return $true
 }
 
 # ============================================================================
@@ -190,7 +300,6 @@ function Write-LogHeader {
 
 function Write-SystemInfo {
     Write-Log "System Information:" -Level INFO
-    
     try {
         $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction SilentlyContinue
         if ($os) {
@@ -198,417 +307,320 @@ function Write-SystemInfo {
             Write-Log "  Architecture: $($os.OSArchitecture)" -Level INFO
             Write-Log "  Build: $($os.BuildNumber)" -Level INFO
         }
-        
-        $computerInfo = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction SilentlyContinue
-        if ($computerInfo) {
-            Write-Log "  Computer: $($computerInfo.Name)" -Level INFO
-        }
-        
         Write-Log "  PowerShell: $($PSVersionTable.PSVersion)" -Level INFO
-        Write-Log "  Script Mode: $(if ($Silent) { 'Silent' } else { 'Interactive' })" -Level INFO
-        Write-Log "  Installer Windows: $(if ($ShowInstallerWindows) { 'Shown' } else { 'Hidden' })" -Level INFO
+        Write-Log "  OS Arch (runtime): $($script:OSArch)" -Level INFO
+        Write-Log "  Silent: $Silent | ForceReinstall: $ForceReinstall" -Level INFO
     } catch {
         Write-Log "Failed to retrieve system information: $($_.Exception.Message)" -Level DEBUG
     }
 }
 
 function Test-AdministratorPrivileges {
-    Write-Log "Checking administrator privileges..." -Level DEBUG
-    
     $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
     $isAdmin = $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-    
     if (-not $isAdmin) {
         Write-Log "Administrator privileges: NOT GRANTED" -Level ERROR
         return $false
     }
-    
     Write-Log "Administrator privileges: GRANTED" -Level SUCCESS
     return $true
 }
 
 function Test-DiskSpace {
-    param(
-        [string] $Path,
-        [int] $RequiredMB = 500
-    )
-    
-    Write-Log "Checking disk space for: $Path" -Level DEBUG
-    
+    param([string] $Path, [int] $RequiredMB = 500)
     try {
         $drive = (Get-Item $Path).PSDrive
         $freeSpaceMB = [math]::Round($drive.Free / 1MB, 2)
-        
-        Write-Log "Available space: $freeSpaceMB MB (Required: $RequiredMB MB)" -Level DEBUG
-        
         if ($freeSpaceMB -lt $RequiredMB) {
             Write-Log "Insufficient disk space: $freeSpaceMB MB available, $RequiredMB MB required" -Level ERROR
             return $false
         }
-        
-        Write-Log "Disk space check: PASSED" -Level SUCCESS
+        Write-Log "Disk space: $freeSpaceMB MB available — OK" -Level SUCCESS
         return $true
     } catch {
         Write-Log "Failed to check disk space: $($_.Exception.Message)" -Level WARN
-        return $true  # Don't block installation
+        return $true
     }
 }
 
 function Get-PackageManifest {
     param([string] $PackageDir)
-    
+
     Write-Log "Scanning package directory: $PackageDir" -Level DEBUG
-    
+
     if (-not (Test-Path $PackageDir)) {
         Write-Log "Package directory not found: $PackageDir" -Level ERROR
         return $null
     }
-    
+
     $exeFiles = Get-ChildItem -Path $PackageDir -Filter "*.exe" -File
-    
     if ($exeFiles.Count -eq 0) {
         Write-Log "No executable files found in: $PackageDir" -Level ERROR
         return $null
     }
-    
-    Write-Log "Found $($exeFiles.Count) package(s)" -Level INFO
-    
+
+    Write-Log "Found $($exeFiles.Count) package file(s)" -Level INFO
+
     $manifest = @()
     foreach ($file in $exeFiles) {
-        # Parse package ID from filename (e.g., Microsoft_VCRedist_2015Plus_x64_14.40.33816.0.exe)
         $fileName = $file.BaseName
-        $packageId = $fileName -replace '_(\d+\.)+\d+$', ''  # Remove version suffix
-        $packageId = $packageId -replace '_', '.'  # Convert underscores to dots
-        
-        # Extract year and architecture for sorting
+
+        # Determine year for sort order
         $year = 0
-        $arch = 0  # x86=0, x64=1 for sorting
-        
-        if ($fileName -match '(\d{4})|(2015Plus)') {
-            $yearStr = $matches[0]
-            $year = switch ($yearStr) {
-                '2015Plus' { 2015 }
-                default { [int]$yearStr }
-            }
-        }
-        
-        if ($fileName -match 'x64') { $arch = 1 }
-        
+        if ($fileName -match '2015Plus') { $year = 2015 }
+        elseif ($fileName -match '(\d{4})') { try { $year = [int]$matches[1] } catch {} }
+
+        # Determine arch sort key (x86=0, x64=1)
+        $archSort = if ($fileName -match 'x64') { 1 } else { 0 }
+
+        # Determine install argument style
+        $argStyle = if ($year -le 2008 -and $year -gt 0) { 'legacy' } else { 'modern' }
+
         $manifest += @{
-            PackageId = $packageId
-            FileName = $file.Name
-            FilePath = $file.FullName
-            Size = [math]::Round($file.Length / 1MB, 2)
-            Year = $year
-            Architecture = $arch
+            PackageId  = ($fileName -replace '_(\d+\.)+\d+$','') -replace '_','.'
+            FileName   = $file.Name
+            FilePath   = $file.FullName
+            Size       = [math]::Round($file.Length / 1MB, 2)
+            Year       = $year
+            ArchSort   = $archSort
+            ArgStyle   = $argStyle
         }
-        
-        Write-Log "  - $($file.Name) ($([math]::Round($file.Length / 1MB, 2)) MB)" -Level DEBUG
+        Write-Log "  + $($file.Name) ($([math]::Round($file.Length/1MB,2)) MB)" -Level DEBUG
     }
-    
-    # Sort by year (ascending), then architecture (x86 before x64)
-    $manifest = $manifest | Sort-Object -Property Year, Architecture
-    
-    # Apply package filter if specified
+
+    # Sort: year ascending, then x86 before x64 (matches abbodi1406 ordering)
+    $manifest = $manifest | Sort-Object Year, ArchSort
+
+    # Apply package filter
     if ($PackageFilter -and $PackageFilter.Count -gt 0) {
         Write-Log "Applying package filter: $($PackageFilter -join ', ')" -Level INFO
         $originalCount = $manifest.Count
-        
-        $filteredManifest = @()
+        $filtered = @()
         foreach ($pkg in $manifest) {
-            $fileName = $pkg.FileName
-            $matched = $false
-            
             foreach ($filter in $PackageFilter) {
-                # Match year patterns (2022, 2019, 2015, 2013, 2012, 2010, 2008, 2005)
-                # 2015+ packages contain "2015Plus" in filename
+                $matched = $false
                 if ($filter -match '^\d{4}$') {
-                    $filterYear = [int]$filter
-                    if ($filterYear -ge 2015) {
-                        # 2015-2022 all use the unified runtime (2015Plus)
-                        # Also match "2015+" variant if user types it
-                        if ($fileName -match '2015Plus|2015\+') {
-                            $matched = $true
-                            break
-                        }
-                    } else {
-                        # Older versions have year in filename
-                        if ($fileName -match $filter) {
-                            $matched = $true
-                            break
-                        }
-                    }
+                    $fy = [int]$filter
+                    if ($fy -ge 2015 -and $pkg.FileName -match '2015Plus') { $matched = $true; break }
+                    elseif ($fy -lt 2015 -and $pkg.FileName -match $filter) { $matched = $true; break }
                 } elseif ($filter -match '2015\+') {
-                    # Handle explicit "2015+" filter variant
-                    if ($fileName -match '2015Plus|2015\+') {
-                        $matched = $true
-                        break
-                    }
-                } elseif ($fileName -match $filter) {
-                    # Direct string matching (e.g., "VSTOR", "x64", "x86")
-                    $matched = $true
-                    break
+                    if ($pkg.FileName -match '2015Plus') { $matched = $true; break }
+                } elseif ($pkg.FileName -match [regex]::Escape($filter)) {
+                    $matched = $true; break
                 }
             }
-            
-            if ($matched) {
-                $filteredManifest += $pkg
-            }
+            if ($matched) { $filtered += $pkg }
         }
-        
-        $manifest = $filteredManifest
-        $filteredCount = $manifest.Count
-        Write-Log "Filtered to $filteredCount package(s) (from $originalCount total)" -Level INFO
+        $manifest = $filtered
+        Write-Log "Filtered: $($manifest.Count) of $originalCount package(s)" -Level INFO
     }
-    
+
     return $manifest
 }
 
 function Test-PackageIntegrity {
-    param(
-        [Parameter(Mandatory = $true)]
-        [array] $Packages
-    )
-    
-    Write-Log "Validating package integrity..." -Level INFO
-    
+    param([array] $Packages)
     $valid = $true
     foreach ($pkg in $Packages) {
         if (-not (Test-Path $pkg.FilePath)) {
-            Write-Log "Package file missing: $($pkg.FileName)" -Level ERROR
+            Write-Log "Missing: $($pkg.FileName)" -Level ERROR
             $valid = $false
             continue
         }
-        
-        # Verify file is not corrupted (basic check: file size > 0)
-        $fileInfo = Get-Item $pkg.FilePath
-        if ($fileInfo.Length -eq 0) {
-            Write-Log "Package file corrupted (0 bytes): $($pkg.FileName)" -Level ERROR
+        if ((Get-Item $pkg.FilePath).Length -eq 0) {
+            Write-Log "Corrupted (0 bytes): $($pkg.FileName)" -Level ERROR
             $valid = $false
         }
     }
-    
-    if ($valid) {
-        Write-Log "Package integrity check: PASSED" -Level SUCCESS
-    } else {
-        Write-Log "Package integrity check: FAILED" -Level ERROR
-    }
-    
+    if ($valid) { Write-Log "Package integrity: PASSED" -Level SUCCESS }
+    else        { Write-Log "Package integrity: FAILED" -Level ERROR }
     return $valid
 }
 
 # ============================================================================
-# INSTALLATION FUNCTIONS
+# INSTALLATION FUNCTION
 # ============================================================================
 
 function Install-Package {
-    param(
-        [Parameter(Mandatory = $true)]
-        [hashtable] $Package
-    )
-    
+    param([Parameter(Mandatory = $true)] [hashtable] $Package)
+
     Write-Log "Installing: $($Package.PackageId)" -Level INFO
-    Write-Log "  File: $($Package.FileName)" -Level DEBUG
-    Write-Log "  Path: $($Package.FilePath)" -Level DEBUG
-    
-    # Determine install arguments based on package year
-    # VCRedist 2005-2008 use different syntax than 2010+
-    $installArgs = if ($Package.Year -le 2008) {
-        @("/Q")  # Old syntax for 2005-2008
-    } else {
-        @("/install", "/quiet", "/norestart")  # Modern syntax for 2010+
+    Write-Log "  File: $($Package.FileName) | Size: $($Package.Size) MB" -Level DEBUG
+
+    # Architecture compatibility check
+    if (-not (Test-PackageArchCompatible -Package $Package)) {
+        return @{ PackageId = $Package.PackageId; ExitCode = 0; Success = $true
+                  Message = "Skipped (incompatible architecture)"; Skipped = $true }
     }
-    
+
+    # Smart skip: already installed at same/newer version
+    if (-not $ForceReinstall) {
+        $installedMap = Get-InstalledVCRedistMap
+        if (Test-PackageAlreadyInstalled -Package $Package -InstalledMap $installedMap) {
+            return @{ PackageId = $Package.PackageId; ExitCode = 0; Success = $true
+                      Message = "Skipped (already installed)"; Skipped = $true }
+        }
+    }
+
+    # Build install arguments
+    $installArgs = if ($Package.ArgStyle -eq 'legacy') {
+        @("/Q")                                    # VC++ 2005/2008
+    } else {
+        @("/install", "/quiet", "/norestart")      # VC++ 2010+
+    }
+
     try {
         $startTime = Get-Date
-        
-        Write-Log "  Executing: $($Package.FilePath) $($installArgs -join ' ')" -Level DEBUG
-        
         $windowStyle = if ($ShowInstallerWindows) { 'Normal' } else { 'Hidden' }
-        Write-Log "  WindowStyle: $windowStyle" -Level DEBUG
-        $process = Start-Process -FilePath $Package.FilePath -ArgumentList $installArgs -Wait -PassThru -WindowStyle $windowStyle
-        
+        Write-Log "  Exec: $($Package.FilePath) $($installArgs -join ' ')" -Level DEBUG
+
+        $process = Start-Process -FilePath $Package.FilePath `
+                                 -ArgumentList $installArgs `
+                                 -Wait -PassThru -WindowStyle $windowStyle
+
         $duration = (Get-Date) - $startTime
         $exitCode = $process.ExitCode
-        
-        Write-Log "  Exit Code: $exitCode | Duration: $($duration.TotalSeconds)s" -Level DEBUG
-        
-        # Interpret exit codes
-        # 0 = Success
-        # 3010 = Success, reboot required
-        # 1641 = Success, reboot initiated
-        # 1638 = Already installed (newer version)
-        # 5100 = System requirements not met
-        
+
+        Write-Log "  Exit: $exitCode | Duration: $([math]::Round($duration.TotalSeconds,1))s" -Level DEBUG
+
         $result = @{
-            PackageId = $Package.PackageId
-            ExitCode = $exitCode
-            Duration = $duration.TotalSeconds
-            Success = $false
-            Message = ""
+            PackageId     = $Package.PackageId
+            ExitCode      = $exitCode
+            Duration      = $duration.TotalSeconds
+            Success       = $false
+            Message       = ""
             RebootRequired = $false
+            Skipped       = $false
         }
-        
+
         switch ($exitCode) {
-            0 {
-                $result.Success = $true
-                $result.Message = "Installed successfully"
-                Write-Log "  [OK] SUCCESS: Installed" -Level SUCCESS
-            }
-            3010 {
-                $result.Success = $true
-                $result.RebootRequired = $true
-                $script:RebootRequired = $true
-                $result.Message = "Installed successfully (reboot required)"
-                Write-Log "  [OK] SUCCESS: Installed (reboot required)" -Level SUCCESS
-            }
-            1641 {
-                $result.Success = $true
-                $result.RebootRequired = $true
-                $script:RebootRequired = $true
-                $result.Message = "Installed successfully (reboot initiated)"
-                Write-Log "  [OK] SUCCESS: Installed (reboot initiated)" -Level SUCCESS
-            }
-            1638 {
-                $result.Success = $true
-                $result.Message = "Already installed (newer or same version)"
-                Write-Log "  [INFO] Already installed (newer/same version)" -Level INFO
-            }
-            5100 {
-                $result.Success = $false
-                $result.Message = "System requirements not met"
-                Write-Log "  [FAIL] FAILED: System requirements not met" -Level ERROR
-            }
+            0    { $result.Success = $true;  $result.Message = "Installed successfully"
+                   Write-Log "  [OK] Installed" -Level SUCCESS }
+            3010 { $result.Success = $true;  $result.RebootRequired = $true
+                   $script:RebootRequired = $true
+                   $result.Message = "Installed (reboot required)"
+                   Write-Log "  [OK] Installed — reboot required" -Level SUCCESS }
+            1641 { $result.Success = $true;  $result.RebootRequired = $true
+                   $script:RebootRequired = $true
+                   $result.Message = "Installed (reboot initiated)"
+                   Write-Log "  [OK] Installed — reboot initiated" -Level SUCCESS }
+            1638 { $result.Success = $true;  $result.Message = "Already installed (newer/same version)"
+                   Write-Log "  [INFO] Already installed (newer/same)" -Level INFO }
+            5100 { $result.Message = "System requirements not met"
+                   Write-Log "  [FAIL] System requirements not met" -Level ERROR }
             default {
-                $result.Success = $false
-                $result.Message = "Installation failed (exit code: $exitCode)"
-                Write-Log "  [FAIL] FAILED: Exit code $exitCode" -Level WARN
-            }
+                   $result.Message = "Failed (exit code: $exitCode)"
+                   Write-Log "  [FAIL] Exit code $exitCode" -Level WARN }
         }
-        
+
         return $result
-        
+
     } catch {
-        Write-Log "  [FAIL] EXCEPTION: $($_.Exception.Message)" -Level ERROR
-        
-        return @{
-            PackageId = $Package.PackageId
-            ExitCode = -1
-            Duration = 0
-            Success = $false
-            Message = "Exception: $($_.Exception.Message)"
-        }
+        Write-Log "  [FAIL] Exception: $($_.Exception.Message)" -Level ERROR
+        return @{ PackageId = $Package.PackageId; ExitCode = -1; Duration = 0
+                  Success = $false; Message = "Exception: $($_.Exception.Message)"; Skipped = $false }
     }
 }
 
 # ============================================================================
-# MAIN INSTALLATION WORKFLOW
+# MAIN WORKFLOW
 # ============================================================================
 
-Write-LogHeader "VCRedist AIO Offline Installer - Starting Installation"
-
-Write-Log "Installation started at: $script:InstallStartTime" -Level INFO
-Write-Log "Package directory: $PackageDir" -Level INFO
-Write-Log "Log directory: $LogDir" -Level INFO
+Write-LogHeader "VCRedist AIO Offline Installer"
+Write-Log "Started: $script:InstallStartTime" -Level INFO
+Write-Log "Package dir: $PackageDir" -Level INFO
 Write-Log "Log file: $script:LogFile" -Level INFO
-
-# Log system information
 Write-SystemInfo
 
 # Phase 1: Validation
 Write-LogHeader "Phase 1: Pre-Installation Validation"
-
 if (-not $SkipValidation) {
-    # Check administrator privileges
     if (-not (Test-AdministratorPrivileges)) {
-        Write-Log "Installation requires administrator privileges. Please run as Administrator." -Level ERROR
+        Write-Log "Requires Administrator. Please re-run as Administrator." -Level ERROR
         exit 1
     }
-    
-    # Check disk space
     if (-not (Test-DiskSpace -Path $PackageDir -RequiredMB 500)) {
-        Write-Log "Insufficient disk space for installation." -Level ERROR
+        Write-Log "Insufficient disk space." -Level ERROR
         exit 1
     }
 } else {
-    Write-Log "Validation skipped (SkipValidation flag set)" -Level WARN
+    Write-Log "Validation skipped (-SkipValidation)" -Level WARN
 }
 
-# Phase 2: Package Discovery
+# Phase 2: Discovery
 Write-LogHeader "Phase 2: Package Discovery"
-
 $packages = Get-PackageManifest -PackageDir $PackageDir
-
 if (-not $packages -or $packages.Count -eq 0) {
-    Write-Log "No packages found for installation." -Level ERROR
+    Write-Log "No packages found." -Level ERROR
     exit 1
 }
+Write-Log "Discovered $($packages.Count) package(s)" -Level SUCCESS
 
-Write-Log "Discovered $($packages.Count) package(s) for installation" -Level SUCCESS
-
-# Phase 3: Package Integrity Check
-Write-LogHeader "Phase 3: Package Integrity Validation"
-
+# Phase 3: Integrity
+Write-LogHeader "Phase 3: Package Integrity"
 if (-not (Test-PackageIntegrity -Packages $packages)) {
-    Write-Log "Package integrity validation failed. Aborting installation." -Level ERROR
+    Write-Log "Integrity check failed. Aborting." -Level ERROR
     exit 1
 }
 
-# Phase 4: Installation
-Write-LogHeader "Phase 4: Installing Packages"
+# Phase 4: Pre-scan installed state
+Write-LogHeader "Phase 4: Scanning Installed VC++ Redistributables"
+$installedMap = Get-InstalledVCRedistMap
+if ($installedMap.Count -gt 0) {
+    Write-Log "Currently installed VC++ packages:" -Level INFO
+    foreach ($k in ($installedMap.Keys | Sort-Object)) {
+        Write-Log "  $k : $($installedMap[$k].DisplayName) v$($installedMap[$k].Version)" -Level INFO
+    }
+} else {
+    Write-Log "No VC++ redistributables currently installed." -Level INFO
+}
+if ($ForceReinstall) { Write-Log "ForceReinstall enabled — skipping smart-skip logic" -Level WARN }
 
-$results = @()
-$successCount = 0
-$failCount = 0
-$currentPackage = 0
-$totalPackages = $packages.Count
+# Phase 5: Installation
+Write-LogHeader "Phase 5: Installing Packages"
+
+$results   = @()
+$success   = 0
+$failed    = 0
+$skipped   = 0
+$total     = $packages.Count
+$current   = 0
 
 foreach ($pkg in $packages) {
-    $currentPackage++
-    
-    Write-LogBlank  # Blank line for readability
-    Write-Log "Progress: [$currentPackage/$totalPackages] Installing package $currentPackage of $totalPackages" -Level INFO
-    
+    $current++
+    Write-LogBlank
+    Write-Log "[$current/$total] $($pkg.FileName)" -Level INFO
+
     $result = Install-Package -Package $pkg
     $results += $result
-    
-    if ($result.Success) {
-        $successCount++
-    } else {
-        $failCount++
-    }
+
+    if ($result.Skipped)       { $skipped++ }
+    elseif ($result.Success)   { $success++ }
+    else                       { $failed++ }
 }
 
-# Phase 5: Summary
-Write-LogHeader "Phase 5: Installation Summary"
-
-$totalDuration = (Get-Date) - $script:InstallStartTime
-
-Write-Log "Total packages: $($packages.Count)" -Level INFO
-Write-Log "Successful: $successCount" -Level SUCCESS
-Write-Log "Failed: $failCount" -Level $(if ($failCount -gt 0) { 'WARN' } else { 'INFO' })
-Write-Log "Total duration: $([math]::Round($totalDuration.TotalSeconds, 2))s" -Level INFO
+# Phase 6: Summary
+Write-LogHeader "Phase 6: Summary"
+$elapsed = (Get-Date) - $script:InstallStartTime
+Write-Log "Total:    $total" -Level INFO
+Write-Log "Installed: $success" -Level SUCCESS
+Write-Log "Skipped:  $skipped (already up-to-date)" -Level INFO
+Write-Log "Failed:   $failed" -Level $(if ($failed -gt 0) { 'WARN' } else { 'INFO' })
+Write-Log "Duration: $([math]::Round($elapsed.TotalSeconds,2))s" -Level INFO
 
 if ($script:RebootRequired) {
     Write-LogBlank
-    Write-Log "[!] REBOOT REQUIRED - One or more packages require a system restart" -Level WARN
-    Write-Log "Please restart your computer to complete the installation" -Level WARN
+    Write-Log "[!] REBOOT REQUIRED — restart to complete installation" -Level WARN
 }
 
-# Detailed results
-Write-Log "`nDetailed Results:" -Level INFO
-foreach ($result in $results) {
-    $status = if ($result.Success) { "[OK]" } else { "[FAIL]" }
-    Write-Log "  $status $($result.PackageId) - $($result.Message)" -Level $(if ($result.Success) { 'INFO' } else { 'WARN' })
+Write-LogBlank
+Write-Log "Detailed Results:" -Level INFO
+foreach ($r in $results) {
+    $tag = if ($r.Skipped) { "[SKIP]" } elseif ($r.Success) { "[OK]  " } else { "[FAIL]" }
+    Write-Log "  $tag $($r.PackageId) — $($r.Message)" -Level $(if ($r.Success -or $r.Skipped) { 'INFO' } else { 'WARN' })
 }
 
-Write-Log "`nLog file saved to: $script:LogFile" -Level INFO
+Write-Log "Log: $script:LogFile" -Level INFO
 
-# Exit with appropriate code
-if ($failCount -gt 0) {
-    Write-Log "Installation completed with errors." -Level WARN
-    exit 1
-} else {
-    Write-Log "Installation completed successfully!" -Level SUCCESS
-    exit 0
-}
+if ($failed -gt 0) { Write-Log "Completed with errors." -Level WARN; exit 1 }
+else               { Write-Log "Completed successfully." -Level SUCCESS; exit 0 }
