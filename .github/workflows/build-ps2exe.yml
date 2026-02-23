@@ -1,0 +1,205 @@
+name: Build PS2EXE Installer
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'packages.json'
+      - 'automation/**'
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      force_release:
+        description: 'Force create a release even if no version change'
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install PS2EXE module
+        shell: pwsh
+        run: |
+          Install-Module ps2exe -Scope CurrentUser -Force
+
+      - name: Ensure required files are present
+        shell: pwsh
+        run: |
+          if (-not (Test-Path automation/install.ps1)) {
+            Write-Error "install.ps1 is missing. Ensure it is committed to the repository."
+            exit 1
+          }
+          if (-not (Test-Path automation/uninstall.ps1)) {
+            Write-Error "uninstall.ps1 is missing. Ensure it is committed to the repository."
+            exit 1
+          }
+          if (-not (Test-Path ./packages.json)) {
+            Write-Error "packages.json is missing. Ensure it is committed to the repository."
+            exit 1
+          }
+
+      - name: Debug workspace (optional)
+        shell: pwsh
+        run: |
+          Write-Host "Current directory contents:"
+          Get-ChildItem -Recurse
+
+      - name: Build EXE using PS2EXE (single downloader)
+        id: build
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          Write-Host "Running PS2EXE build script (will download packages if needed)..."
+          $scriptPath = (Resolve-Path ./automation/build-ps2exe.ps1).Path
+          $packagesFile = (Resolve-Path ./packages.json).Path
+          $outputDir = (Resolve-Path ./dist -ErrorAction SilentlyContinue).Path
+          if (-not $outputDir) { New-Item -ItemType Directory -Path ./dist | Out-Null; $outputDir = (Resolve-Path ./dist).Path }
+          Write-Host "Invoking: & $scriptPath -PackagesFile $packagesFile -OutputDir $outputDir -VerboseBuild"
+          & $scriptPath -PackagesFile $packagesFile -OutputDir $outputDir -VerboseBuild
+
+      - name: Compute EXE metadata and set outputs
+        id: compute-metadata
+        shell: pwsh
+        run: |
+          if (-not (Test-Path dist/vcredist-aio.exe)) {
+            Add-Content -Path $env:GITHUB_OUTPUT -Value "noexe=1"
+            exit 0
+          }
+          $exePath = (Resolve-Path ./dist/vcredist-aio.exe -ErrorAction Stop).Path
+          $hash = (Get-FileHash -Algorithm SHA256 -Path $exePath).Hash
+          $short = $hash.Substring(0,12)
+          $sizeBytes = (Get-Item $exePath).Length
+          $sizeMB = [math]::Round($sizeBytes / 1MB, 2)
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "exe_sha=$hash"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "exe_sha_short=$short"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "exe_size_bytes=$sizeBytes"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "exe_size_mb=$sizeMB"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "exe_path=$exePath"
+          Write-Host "Computed EXE metadata: SHA256=$hash, Size=${sizeMB}MB"
+
+      - name: Create ZIP package (standalone script)
+        if: steps.compute-metadata.outputs.noexe != '1'
+        shell: pwsh
+        run: |
+          if (Test-Path 'release-package') { Remove-Item -Path 'release-package' -Recurse -Force }
+          $releaseDir = 'release-package'
+          $packagesDir = Join-Path $releaseDir 'packages'
+          New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
+          New-Item -ItemType Directory -Path $packagesDir -Force | Out-Null
+          Copy-Item -Path 'dist/packages/*' -Destination $packagesDir -Force
+          Copy-Item -Path 'automation/install.ps1' -Destination $releaseDir -Force
+          Copy-Item -Path 'automation/uninstall.ps1' -Destination $releaseDir -Force
+          $readme = @"
+          VCRedist AIO Offline Installer
+
+          Extract this archive and run `install.ps1` as Administrator.
+          "@
+          $readme | Out-File (Join-Path $releaseDir 'README.txt') -Encoding UTF8
+          New-Item -ItemType Directory -Path artifact -Force | Out-Null
+          Compress-Archive -Path "$releaseDir/*" -DestinationPath 'artifact/vc_redist_aio_offline.zip' -CompressionLevel Optimal -Force
+          Write-Host "✔ ZIP package created: artifact/vc_redist_aio_offline.zip"
+
+      - name: Compute SHA256 for all assets
+        if: steps.compute-metadata.outputs.noexe != '1'
+        id: compute-sha
+        shell: pwsh
+        run: |
+          $exeFile = 'dist/vcredist-aio.exe'
+          $zipFile = 'artifact/vc_redist_aio_offline.zip'
+          $exeSha = (Get-FileHash -Algorithm SHA256 $exeFile).Hash
+          $zipSha = (Get-FileHash -Algorithm SHA256 $zipFile).Hash
+          Write-Host "EXE SHA256: $exeSha"
+          Write-Host "ZIP SHA256: $zipSha"
+          $exeSize = [math]::Round((Get-Item $exeFile).Length / 1MB, 2)
+          $zipSize = [math]::Round((Get-Item $zipFile).Length / 1MB, 2)
+          $checksumContent = @"
+          $exeSha  VC_Redist_AIO_Offline.exe
+          $zipSha  vc_redist_aio_offline.zip
+          "@
+          New-Item -ItemType Directory -Path artifact -Force | Out-Null
+          $checksumContent | Out-File 'artifact/SHA256SUMS.txt' -Encoding ASCII -Force
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "exe_sha=$exeSha"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "zip_sha=$zipSha"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "exe_size=$exeSize"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "zip_size=$zipSize"
+
+      - name: Extract version for release name
+        if: steps.compute-metadata.outputs.noexe != '1'
+        id: get-version
+        shell: pwsh
+        run: |
+          $packagesJson = Get-Content packages.json -Raw | ConvertFrom-Json
+          $vcredist2015Plus = $packagesJson.packages | Where-Object { $_.id -eq "Microsoft.VCRedist.2015Plus.x64" }
+          if ($vcredist2015Plus -and $vcredist2015Plus.version) {
+            $version = $vcredist2015Plus.version
+            Write-Host "Found version: $version"
+            Add-Content -Path $env:GITHUB_OUTPUT -Value "version=$version"
+            Add-Content -Path $env:GITHUB_OUTPUT -Value "release_name=VCRedist AIO $version"
+          } else {
+            Write-Error "Could not find Microsoft.VCRedist.2015Plus.x64 version"
+            exit 1
+          }
+
+      - name: Generate release notes
+        if: steps.compute-metadata.outputs.noexe != '1'
+        id: release-notes
+        shell: pwsh
+        run: |
+          $packagesJson = Get-Content packages.json -Raw | ConvertFrom-Json
+          $notes = "# VCRedist AIO Offline Installer`n`n"
+          $notes += "## Assets`n`n"
+          $notes += "- **VC_Redist_AIO_Offline.exe** | ${{ steps.compute-sha.outputs.exe_size }} MB | `$${{ steps.compute-sha.outputs.exe_sha }}``n"
+          $notes += "- **vc_redist_aio_offline.zip** | ${{ steps.compute-sha.outputs.zip_size }} MB | `$${{ steps.compute-sha.outputs.zip_sha }}``n`n"
+          $notes += "## Included Packages`n`n"
+          foreach ($pkg in $packagesJson.packages) { $notes += "- $($pkg.id) - $($pkg.version)`n" }
+          $notes | Out-File 'release-notes.md' -Encoding UTF8 -Force
+          Write-Host "Release notes generated"
+
+      - name: Upload EXE and checksum bundle
+        if: steps.compute-metadata.outputs.noexe != '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: vcredist-aio
+          path: |
+            dist/vcredist-aio.exe
+            artifact/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create Release
+        if: ${{ steps.compute-metadata.outputs.noexe != '1' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ steps.get-version.outputs.version }}
+          name: ${{ steps.get-version.outputs.release_name }}
+          body_path: release-notes.md
+          files: |
+            dist/vcredist-aio.exe
+            artifact/vc_redist_aio_offline.zip
+            artifact/SHA256SUMS.txt
+          draft: false
+          prerelease: false
+          make_latest: true
+          fail_on_unmatched_files: true
+
+      - name: Final status
+        shell: pwsh
+        run: |
+          if (Test-Path dist/vcredist-aio.exe) { Write-Host "Build succeeded and artifacts uploaded." } else { Write-Host "Build did not produce EXE; check logs."; exit 1 }
