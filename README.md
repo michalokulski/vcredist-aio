@@ -1,7 +1,7 @@
 ﻿# VC Redist AIO — Winget-based Offline Installer
 
 ![Latest Release](https://img.shields.io/github/v/release/michalokulski/vcredist-aio)
-![Build Status](https://github.com/michalokulski/vcredist-aio/actions/workflows/build-release.yml/badge.svg)
+![Build Status](https://github.com/michalokulski/vcredist-aio/actions/workflows/build-ps2exe.yml/badge.svg)
 ![License](https://img.shields.io/github/license/michalokulski/vcredist-aio)
 
 **VC Redist AIO** is an automated project that downloads official Microsoft Visual C++ Redistributable installers via **Winget**, bundles them into offline artifacts, and provides a standalone PowerShell installation engine plus a compiled EXE and ZIP package for distribution. The project focuses on automation, transparency, and modern tooling optimized for Windows 10/11.
@@ -119,8 +119,11 @@ VC_Redist_AIO_Offline.exe /S /PACKAGES="2019,2022" /LOGFILE="C:\Logs\install.log
 # Skip pre-installation validation (not recommended)
 .\install.ps1 -SkipValidation
 
-# Both flags
-.\install.ps1 -Silent -SkipValidation
+# Force reinstall even if already installed
+.\install.ps1 -ForceReinstall
+
+# Combine flags
+.\install.ps1 -Silent -ForceReinstall
 ```
 
 **Silent Installation:**
@@ -204,7 +207,7 @@ If you installed using the EXE installer, the uninstaller is registered in Windo
 
 2. **Run the EXE build script (PS2EXE)**:
    ```powershell
-   pwsh automation/build-ps2exe.ps1 `
+   & ./automation/build-ps2exe.ps1 `
      -PackagesFile packages.json `
      -OutputDir dist
    ```
@@ -242,9 +245,12 @@ The project uses a modular architecture:
   - Logging infrastructure with color-coded output
   - Pre-installation validation (admin, disk space)
   - Package discovery and integrity checks
-  - Exit code interpretation and error handling
+  - **Smart skip**: detects already-installed packages via registry and skips them
+  - **Architecture detection**: skips x64 packages on 32-bit OS automatically
+  - Correct install order: year ascending, x86 before x64
+  - Exit code interpretation and error handling (`0`, `3010`, `1638`, `1641`)
   - Installation statistics and summary
-  - Supports package filtering and custom log locations
+  - Supports package filtering (`-PackageFilter`), force reinstall (`-ForceReinstall`), and custom log locations
 
 - **`automation/uninstall.ps1`**: Comprehensive uninstaller for VC++ redistributables
   - Registry scanning for installed packages
@@ -311,11 +317,8 @@ This project is provided as-is for educational and automation purposes. Microsof
 
 ## Roadmap / TODO
 
-- Smarter installation (skip already-installed components)
-  - Detect installed VC++ redistributables via registry (HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall and Wow6432Node).
-  - Match by product/year/architecture (or known product/upgrade codes) and skip execution when present.
-  - Log clear reason per package: "Already installed (skipped)" with detected version.
-  - Add `-ForceReinstall` switch to override and always run installers.
+- Consider code-signing the EXE installer for enterprise deployments
+- ARM64 package support when Winget manifests become available
 
 Contributions welcome; see Developer Guide for local testing.
 

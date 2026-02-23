@@ -139,6 +139,7 @@ jobs:
           Add-Content -Path $env:GITHUB_OUTPUT -Value "zip_size=$zipSize"
 
       - name: Extract version for release name
+        if: steps.compute-metadata.outputs.noexe != '1'
         id: get-version
         shell: pwsh
         run: |
@@ -155,6 +156,7 @@ jobs:
           }
 
       - name: Generate release notes
+        if: steps.compute-metadata.outputs.noexe != '1'
         id: release-notes
         shell: pwsh
         run: |
@@ -180,7 +182,7 @@ jobs:
           retention-days: 30
 
       - name: Create Release
-        if: steps.compute-metadata.outputs.noexe != '1' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        if: ${{ steps.compute-metadata.outputs.noexe != '1' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
