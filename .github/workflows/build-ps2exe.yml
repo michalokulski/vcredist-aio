@@ -223,7 +223,7 @@ jobs:
           $notes += "powershell -ExecutionPolicy Bypass -File install.ps1"
           $notes += "```"
           $notes += ""
-          $notes += "> Built from [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs) manifests via PS2EXE."
+          $notes += "**Note:** Built from [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs) manifests via PS2EXE."
 
           $notes -join "`n" | Out-File 'release-notes.md' -Encoding UTF8 -Force
           Write-Host "Release notes generated"
