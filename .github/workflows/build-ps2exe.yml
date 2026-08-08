@@ -149,7 +149,7 @@ jobs:
             $version = $vcredist2015Plus.version
             Write-Host "Found version: $version"
             Add-Content -Path $env:GITHUB_OUTPUT -Value "version=$version"
-            Add-Content -Path $env:GITHUB_OUTPUT -Value "release_name=VCRedist AIO $version"
+            Add-Content -Path $env:GITHUB_OUTPUT -Value "release_name=VC Redist AIO $version"
           } else {
             Write-Error "Could not find Microsoft.VCRedist.2015Plus.x64 version"
             exit 1
@@ -161,13 +161,62 @@ jobs:
         shell: pwsh
         run: |
           $packagesJson = Get-Content packages.json -Raw | ConvertFrom-Json
-          $notes = "# VCRedist AIO Offline Installer`n`n"
-          $notes += "## Assets`n`n"
-          $notes += "- **VC_Redist_AIO_Offline.exe** | ${{ steps.compute-sha.outputs.exe_size }} MB | `$${{ steps.compute-sha.outputs.exe_sha }}``n"
-          $notes += "- **vc_redist_aio_offline.zip** | ${{ steps.compute-sha.outputs.zip_size }} MB | `$${{ steps.compute-sha.outputs.zip_sha }}``n`n"
-          $notes += "## Included Packages`n`n"
-          foreach ($pkg in $packagesJson.packages) { $notes += "- $($pkg.id) - $($pkg.version)`n" }
-          $notes | Out-File 'release-notes.md' -Encoding UTF8 -Force
+          $version = '${{ steps.get-version.outputs.version }}'
+
+          # Try to get previous release for changelog
+          $prevPackages = $null
+          try {
+            $prevTag = (gh release list --limit 1 --json tagName | ConvertFrom-Json).tagName
+            if ($prevTag) {
+              $prevJson = gh release view $prevTag --json body | ConvertFrom-Json
+              $prevPackages = @{}
+              foreach ($line in ($prevJson.body -split "`n")) {
+                if ($line -match '^\|\s*`([^`]+)`\s*\|\s*`([^`]+)`') {
+                  $prevPackages[$matches[1]] = $matches[2]
+                }
+              }
+            }
+          } catch { Write-Host "Could not fetch previous release: $_" }
+
+          $notes = @()
+          $notes += "# VC Redist AIO — $version"
+          $notes += ""
+          $notes += "All-in-one offline installer for Microsoft Visual C++ Redistributables (2005–2022 + VSTOR)."
+          $notes += ""
+          $notes += "## 📦 Included Packages"
+          $notes += ""
+          $notes += "| Package | Version |"
+          $notes += "|---------|---------|"
+          foreach ($pkg in $packagesJson.packages) {
+            $change = ""
+            if ($prevPackages -and $prevPackages.ContainsKey($pkg.id)) {
+              if ($prevPackages[$pkg.id] -ne $pkg.version) {
+                $change = " *(updated)*"
+              }
+            }
+            $notes += "| ``$($pkg.id)`` | ``$($pkg.version)``$change |"
+          }
+          $notes += ""
+          $notes += "## 📥 Download"
+          $notes += ""
+          $notes += "| Asset | Size | SHA256 |"
+          $notes += "|-------|------|--------|"
+          $notes += "| **VC_Redist_AIO_Offline.exe** | ${{ steps.compute-sha.outputs.exe_size }} MB | ``${{ steps.compute-sha.outputs.exe_sha }}`` |"
+          $notes += "| **vc_redist_aio_offline.zip** | ${{ steps.compute-sha.outputs.zip_size }} MB | ``${{ steps.compute-sha.outputs.zip_sha }}`` |"
+          $notes += ""
+          $notes += "## 🚀 Quick Start"
+          $notes += ""
+          $notes += "```cmd"
+          $notes += ":: Silent install (run as Administrator)"
+          $notes += "VC_Redist_AIO_Offline.exe /S"
+          $notes += ""
+          $notes += ":: Or extract and run manually"
+          $notes += "powershell -ExecutionPolicy Bypass -File install.ps1"
+          $notes += "```"
+          $notes += ""
+          $notes += "> Built from [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs) manifests via PS2EXE."
+
+          $notes -join "`n" | Out-File 'release-notes.md' -Encoding UTF8 -Force
           Write-Host "Release notes generated"
 
       - name: Upload EXE and checksum bundle
