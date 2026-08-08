@@ -450,7 +450,7 @@ if (-not (Test-Path $iconPath)) { $iconPath = $null }
 $exeFullPath = Join-Path $OutputDir $Output
 
 # Prefer the cmdlet interface provided by the ps2exe module
-if (-not (Get-Command Invoke-ps2exe -ErrorAction SilentlyContinue)) {
+if (-not (Get-Command Invoke-PS2EXE -ErrorAction SilentlyContinue)) {
   Write-Error "❌ PS2EXE cmdlet 'Invoke-ps2exe' not found. Ensure 'Install-Module ps2exe -Scope CurrentUser' ran successfully in CI."
   exit 1
 }
@@ -471,7 +471,7 @@ if ($VerboseBuild.IsPresent) {
 }
 
 try {
-  Invoke-ps2exe @invokeParams
+  Invoke-PS2EXE @invokeParams
   Write-Host "Build complete. Output: $exeFullPath" -ForegroundColor Green
 } catch {
   Write-Error "❌ PS2EXE build failed: $($_.Exception.Message)"

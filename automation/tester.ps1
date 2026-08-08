@@ -1,10 +1,10 @@
 # VCRedist AIO Installer Automated Test Script
 param(
-    [switch]$Auto
+  [switch]$Auto
 )
 
 # Set these paths as needed
-$InstallerExe = "C:\Users\admin\Downloads\VC_Redist_AIO_Offline.exe"  # <-- Set to your actual built EXE
+$InstallerExe = "C:\Users\admin\Downloads\VC_Redist_AIO_Offline.exe" # <-- Set to your actual built EXE
 $TestDir = "C:\VCRedistTest"
 $LogDir = Join-Path $TestDir "logs"
 $ReportFile = Join-Path $TestDir "test-report.txt"
@@ -14,73 +14,73 @@ New-Item -ItemType Directory -Path $TestDir -Force | Out-Null
 New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
 
 if (!(Test-Path $InstallerExe)) {
-    Write-Error "Installer EXE not found: $InstallerExe"
-    exit 1
+  Write-Error "Installer EXE not found: $InstallerExe"
+  exit 1
 }
 
 function Invoke-Test {
-    param(
-        [string]$Name,
-        [string]$InstallerArgs = "",
-        [string]$Desc
-    )
-    $log = "$LogDir\$Name-install.log"
-    Write-Host "Running: $Name ($Desc)"
-    $installResult = $null
-    $uninstallResult = $null
+  param(
+    [string]$Name,
+    [string]$InstallerArgs = "",
+    [string]$Desc
+  )
+  $log = "$LogDir\$Name-install.log"
+  Write-Host "Running: $Name ($Desc)"
+  $installResult = $null
+  $uninstallResult = $null
+  try {
+    $process = Start-Process -FilePath $InstallerExe -ArgumentList $InstallerArgs -Wait -NoNewWindow -Passthru
+    $exitCode = $process.ExitCode
+    $output = @("NSIS installer does not produce console output. See log files in $LogDir or install location.")
+    $installResult = [pscustomobject]@{
+      Name = $Name
+      Args = $InstallerArgs
+      Desc = $Desc
+      ExitCode = $exitCode
+      Log = $log
+      Output = $output
+    }
+  } catch {
+    $output = $_.Exception.Message
+    $exitCode = -999
+    $installResult = [pscustomobject]@{
+      Name = $Name
+      Args = $InstallerArgs
+      Desc = $Desc
+      ExitCode = $exitCode
+      Log = $log
+      Output = $output -split "`r?`n"
+    }
+  }
+  # If install was successful (exit code 0), run uninstall.ps1 directly from install path
+  $uninstallLog = "$LogDir\$Name-uninstall.log"
+  $uninstallScript = "$env:ProgramFiles\VCRedist_AIO\uninstall.ps1"
+  if ($installResult.ExitCode -eq 0 -and (Test-Path $uninstallScript)) {
+    Write-Host "  Running uninstall.ps1 (silent) from $uninstallScript"
     try {
-        $process = Start-Process -FilePath $InstallerExe -ArgumentList $InstallerArgs -Wait -NoNewWindow -PassThru
-        $exitCode = $process.ExitCode
-        $output = @("NSIS installer does not produce console output. See log files in $LogDir or install location.")
-        $installResult = [PSCustomObject]@{
-            Name = $Name
-            Args = $InstallerArgs
-            Desc = $Desc
-            ExitCode = $exitCode
-            Log = $log
-            Output = $output
-        }
+      $uninstallProc = Start-Process -FilePath "powershell.exe" -ArgumentList "-ExecutionPolicy Bypass -NoProfile -File `"$uninstallScript`" -Silent" -Wait -NoNewWindow -Passthru
+      $uninstallExit = $uninstallProc.ExitCode
+      $uninstallOutput = @("See uninstall log in $LogDir or install location.")
+      $uninstallResult = [pscustomobject]@{
+        Name = "$Name-uninstall"
+        Args = "-Silent"
+        Desc = "Uninstall after $Name"
+        ExitCode = $uninstallExit
+        Log = $uninstallLog
+        Output = $uninstallOutput
+      }
     } catch {
-        $output = $_.Exception.Message
-        $exitCode = -999
-        $installResult = [PSCustomObject]@{
-            Name = $Name
-            Args = $InstallerArgs
-            Desc = $Desc
-            ExitCode = $exitCode
-            Log = $log
-            Output = $output -split "`r?`n"
-        }
+      $uninstallResult = [pscustomobject]@{
+        Name = "$Name-uninstall"
+        Args = "-Silent"
+        Desc = "Uninstall after $Name"
+        ExitCode = -999
+        Log = $uninstallLog
+        Output = $_.Exception.Message -split "`r?`n"
+      }
     }
-    # If install was successful (exit code 0), run uninstall.ps1 directly from install path
-    $uninstallLog = "$LogDir\$Name-uninstall.log"
-    $uninstallScript = "$env:ProgramFiles\VCRedist_AIO\uninstall.ps1"
-    if ($installResult.ExitCode -eq 0 -and (Test-Path $uninstallScript)) {
-        Write-Host "  Running uninstall.ps1 (silent) from $uninstallScript"
-        try {
-            $uninstallProc = Start-Process -FilePath "powershell.exe" -ArgumentList "-ExecutionPolicy Bypass -NoProfile -File `"$uninstallScript`" -Silent" -Wait -NoNewWindow -PassThru
-            $uninstallExit = $uninstallProc.ExitCode
-            $uninstallOutput = @("See uninstall log in $LogDir or install location.")
-            $uninstallResult = [PSCustomObject]@{
-                Name = "$Name-uninstall"
-                Args = "-Silent"
-                Desc = "Uninstall after $Name"
-                ExitCode = $uninstallExit
-                Log = $uninstallLog
-                Output = $uninstallOutput
-            }
-        } catch {
-            $uninstallResult = [PSCustomObject]@{
-                Name = "$Name-uninstall"
-                Args = "-Silent"
-                Desc = "Uninstall after $Name"
-                ExitCode = -999
-                Log = $uninstallLog
-                Output = $_.Exception.Message -split "`r?`n"
-            }
-        }
-    }
-    return @($installResult, $uninstallResult) | Where-Object { $_ -ne $null }
+  }
+  return @($installResult,$uninstallResult) | Where-Object { $_ -ne $null }
 }
 
 $results = @()
@@ -96,9 +96,9 @@ $results += Invoke-Test -Name "install_customlog" -InstallerArgs "/S /LOGDIR=`"$
 $results += Invoke-Test -Name "install_customlog-uninstall" -InstallerArgs "-Silent" -Desc "Uninstall after install_customlog"
 
 if (-not $Auto) {
-    # Only run interactive/manual tests if not in auto mode
-    $results += Invoke-Test -Name "install_interactive" -InstallerArgs "/LOGDIR=`"$LogDir`"" -Desc "Interactive install, all packages"
-    $results += Invoke-Test -Name "install_interactive-uninstall" -InstallerArgs "-Silent" -Desc "Uninstall after install_interactive"
+  # Only run interactive/manual tests if not in auto mode
+  $results += Invoke-Test -Name "install_interactive" -InstallerArgs "/LOGDIR=`"$LogDir`"" -Desc "Interactive install, all packages"
+  $results += Invoke-Test -Name "install_interactive-uninstall" -InstallerArgs "-Silent" -Desc "Uninstall after install_interactive"
 }
 
 # Generate summary report
@@ -109,14 +109,14 @@ $summary += "Installer: $InstallerExe"
 $summary += "Test Directory: $TestDir"
 $summary += ""
 foreach ($r in $results) {
-    $summary += "Test: $($r.Name)"
-    $summary += "  Desc: $($r.Desc)"
-    $summary += "  Args: $($r.Args)"
-    $summary += "  ExitCode: $($r.ExitCode)"
-    $summary += "  Log: $($r.Log)"
-    $summary += "  --- First 10 lines of output ---"
-    $summary += ($r.Output -split "`n" | Select-Object -First 10)
-    $summary += ""
+  $summary += "Test: $($r.Name)"
+  $summary += "  Desc: $($r.Desc)"
+  $summary += "  Args: $($r.Args)"
+  $summary += "  ExitCode: $($r.ExitCode)"
+  $summary += "  Log: $($r.Log)"
+  $summary += "  --- First 10 lines of output ---"
+  $summary += ($r.Output -split "`n" | Select-Object -First 10)
+  $summary += ""
 }
 $summary -join "`n" | Set-Content $ReportFile -Encoding UTF8
 
