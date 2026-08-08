@@ -40,8 +40,8 @@ VC Redist AIO — Winget-based offline installer for Microsoft Visual C++ Redist
 
 ## Build Pipeline
 
-1. `check-updates.yml` runs daily — queries Winget API, updates `packages.json`, pushes branch
-2. `build-ps2exe.yml` triggers on push to main — downloads packages, encodes into bootstrap, compiles EXE, creates ZIP, publishes GitHub Release
+1. `check-updates.yml` runs daily — queries Winget API, updates `packages.json`, force-pushes to single `update/auto` branch, opens/updates PR
+2. Merge PR → `build-ps2exe.yml` triggers on push to main — downloads packages, encodes into bootstrap, compiles EXE, creates ZIP, publishes GitHub Release
 3. `lint.yml` runs on PR/push — PSScriptAnalyzer + formatter check
 
 ## Do NOT

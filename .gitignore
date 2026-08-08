@@ -39,4 +39,5 @@ Thumbs.db
 
 # Ignore git helper files
 update-branch.txt
+updates-found.txt
 release-notes.md

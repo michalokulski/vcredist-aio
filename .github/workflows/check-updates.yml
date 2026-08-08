@@ -2,6 +2,7 @@
 
 permissions:
   contents: write
+  pull-requests: write
 
 on:
   schedule:
@@ -28,43 +29,20 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          & ./automation/update-check.ps1 `
-            -PackagesFile packages.json `
-            -UpdateBranchPrefix update
+          & ./automation/update-check.ps1 -PackagesFile packages.json
 
-      - name: Configure git
-        shell: pwsh
-        run: |
-          git config --global user.name "github-actions"
-          git config --global user.email "actions@github.com"
+      - name: Create or update Pull Request
+        if: hashFiles('updates-found.txt') != ''
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: update/auto
+          base: main
+          commit-message: "chore: update packages.json to latest Winget versions"
+          title: "chore: update VC++ Redist packages"
+          body: |
+            Automated Winget version check — new versions detected.
 
-      - name: Push update branch and trigger build
-        shell: pwsh
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if (Test-Path update-branch.txt) {
-            $branch = Get-Content update-branch.txt
-
-            git checkout -b $branch
-            git add packages.json
-            git commit -m "Automated update: $branch"
-            $repo = $env:GITHUB_REPOSITORY
-            $url = "https://x-access-token:$env:GITHUB_TOKEN@github.com/$repo.git"
-            git push $url HEAD:refs/heads/$branch
-            Write-Host "✔ Branch pushed: $branch"
-
-            # Trigger the PS2EXE build workflow via the Actions REST API
-            try {
-              $workflowFile = 'build-ps2exe.yml'
-              $dispatchUri = "https://api.github.com/repos/$repo/actions/workflows/$workflowFile/dispatches"
-              $body = @{ ref = 'main' } | ConvertTo-Json
-              $headers = @{ Authorization = "token $env:GITHUB_TOKEN"; Accept = 'application/vnd.github+json'; 'User-Agent' = 'github-actions' }
-              Invoke-RestMethod -Uri $dispatchUri -Method Post -Headers $headers -Body $body -ContentType 'application/json'
-              Write-Host "✔ Dispatched workflow: $workflowFile (ref: main)"
-            } catch {
-              Write-Warning "Could not dispatch build workflow: $_"
-            }
-          } else {
-            Write-Host "ℹ No updates to push"
-          }
+            Merge this PR to trigger the build and release workflow.
+          labels: automated,update
+          delete-branch: false

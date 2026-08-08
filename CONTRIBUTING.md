@@ -17,7 +17,7 @@ Install-Module PowerShell-Beautifier -Scope CurrentUser -Force
 
 ## Development Workflow
 
-1. **Update packages.json** — run `automation/update-check.ps1 -PackagesFile packages.json -UpdateBranchPrefix update`
+1. **Update packages.json** — run `automation/update-check.ps1 -PackagesFile packages.json`
 2. **Build EXE** — run `automation/build-ps2exe.ps1 -VerboseBuild`
 3. **Test** — run `automation/tester.ps1` (requires admin)
 4. **Lint** — run `Invoke-ScriptAnalyzer -Path . -Recurse -Settings PSScriptAnalyzerSettings.psd1`

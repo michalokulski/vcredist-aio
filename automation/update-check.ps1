@@ -1,9 +1,6 @@
 ﻿param(
     [Parameter(Mandatory = $true)]
-    [string] $PackagesFile,
-
-    [Parameter(Mandatory = $true)]
-    [string] $UpdateBranchPrefix
+    [string] $PackagesFile
 )
 
 $ErrorActionPreference = "Stop"
@@ -185,12 +182,10 @@ if ($updatesFound) {
     Write-Host "`n📝 Updates found, saving packages.json..." -ForegroundColor Green
     $packagesJson | ConvertTo-Json -Depth 10 | Out-File $PackagesFile -Encoding UTF8
 
-    $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
-    $branchName = "$UpdateBranchPrefix-$timestamp"
-    Write-Host "🌿 Update branch: $branchName"
-    $branchName | Out-File "update-branch.txt" -Encoding UTF8
+    # Signal to CI that updates were found
+    "true" | Out-File "updates-found.txt" -Encoding UTF8 -Force
 
-    Write-Host "✅ Ready for commit and release" -ForegroundColor Green
+    Write-Host "✅ packages.json updated — ready for commit" -ForegroundColor Green
 }
 else {
     Write-Host "`n✔ No updates found." -ForegroundColor Green
