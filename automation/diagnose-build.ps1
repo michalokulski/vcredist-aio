@@ -1,4 +1,4 @@
-﻿# NSIS Build Diagnostics Script
+﻿# PS2EXE Build Diagnostics Script
 # Run this to diagnose build issues
 
 param(
@@ -15,22 +15,15 @@ Write-Host "  OS: $($os.Caption) $($os.Version)"
 Write-Host "  Architecture: $($os.OSArchitecture)"
 Write-Host "  PowerShell: $($PSVersionTable.PSVersion)"
 
-# 2. Check NSIS Installation
-Write-Host "`n🔧 NSIS Installation:" -ForegroundColor Yellow
-$nsisPath = "C:\Program Files (x86)\NSIS\makensis.exe"
-$nsisPath64 = "C:\Program Files\NSIS\makensis.exe"
-
-if (Test-Path $nsisPath) {
-    $version = & $nsisPath /VERSION 2>$null
-    Write-Host "  ✓ NSIS found (x86): $nsisPath" -ForegroundColor Green
-    Write-Host "  Version: $version"
-} elseif (Test-Path $nsisPath64) {
-    $version = & $nsisPath64 /VERSION 2>$null
-    Write-Host "  ✓ NSIS found (x64): $nsisPath64" -ForegroundColor Green
-    Write-Host "  Version: $version"
+# 2. Check PS2EXE Installation
+Write-Host "`n🔧 PS2EXE Module:" -ForegroundColor Yellow
+$ps2exeModule = Get-Module -ListAvailable -Name ps2exe | Sort-Object Version -Descending | Select-Object -First 1
+if ($ps2exeModule) {
+    Write-Host "  ✓ PS2EXE found: v$($ps2exeModule.Version)" -ForegroundColor Green
+    Write-Host "  Path: $($ps2exeModule.ModuleBase)"
 } else {
-    Write-Host "  ✗ NSIS NOT FOUND" -ForegroundColor Red
-    Write-Host "  Install with: choco install nsis -y"
+    Write-Host "  ✗ PS2EXE NOT FOUND" -ForegroundColor Red
+    Write-Host "  Install with: Install-Module ps2exe -Scope CurrentUser -Force"
 }
 
 # 3. Check packages.json
@@ -64,34 +57,24 @@ Write-Host "`n📁 Build Output Directory ($OutputDir):" -ForegroundColor Yellow
 if (Test-Path $OutputDir) {
     Write-Host "  ✓ Directory exists" -ForegroundColor Green
     
-    $installer = Join-Path $OutputDir "VC_Redist_AIO_Offline.exe"
-    $nsisScript = Join-Path $OutputDir "installer.nsi"
-    $nsisLog = Join-Path $OutputDir "nsis-build.log"
+    $installer = Join-Path $OutputDir "vcredist-aio.exe"
+    $bootstrap = Join-Path $OutputDir "..\automation\stage-ps2exe\bootstrap.ps1"
     $installPs1 = Join-Path $OutputDir "install.ps1"
     $packagesDir = Join-Path $OutputDir "packages"
     
     # Check installer
     if (Test-Path $installer) {
         $size = [math]::Round((Get-Item $installer).Length / 1MB, 2)
-        Write-Host "  ✓ Installer: VC_Redist_AIO_Offline.exe ($size MB)" -ForegroundColor Green
+        Write-Host "  ✓ Installer: vcredist-aio.exe ($size MB)" -ForegroundColor Green
     } else {
         Write-Host "  ✗ Installer not found" -ForegroundColor Red
     }
     
-    # Check NSIS script
-    if (Test-Path $nsisScript) {
-        Write-Host "  ✓ NSIS Script: installer.nsi" -ForegroundColor Green
+    # Check bootstrap
+    if (Test-Path $bootstrap) {
+        Write-Host "  ✓ Bootstrap: bootstrap.ps1" -ForegroundColor Green
     } else {
-        Write-Host "  ✗ NSIS Script not found" -ForegroundColor Red
-    }
-    
-    # Check NSIS log
-    if (Test-Path $nsisLog) {
-        Write-Host "  ✓ NSIS Log: nsis-build.log" -ForegroundColor Green
-        Write-Host "`n  Last 5 lines of NSIS log:"
-        Get-Content $nsisLog -Tail 5 | ForEach-Object { Write-Host "    $_" }
-    } else {
-        Write-Host "  ℹ NSIS Log not found (normal if build hasn't run)" -ForegroundColor Gray
+        Write-Host "  ℹ Bootstrap not found (normal if build hasn't run)" -ForegroundColor Gray
     }
     
     # Check install.ps1
@@ -137,35 +120,30 @@ if ($env:GITHUB_TOKEN) {
     Write-Host "    Set with: `$env:GITHUB_TOKEN = 'your_token'" -ForegroundColor Cyan
 }
 
-# 6. Test NSIS Compilation
-Write-Host "`n🧪 Test NSIS Compilation:" -ForegroundColor Yellow
-$testNsis = @'
-!define PRODUCT_NAME "Test"
-OutFile "test.exe"
-Section "MainSection"
-  DetailPrint "Test"
-SectionEnd
-'@
+# 6. Test PS2EXE Compilation
+Write-Host "`n🧪 Test PS2EXE Compilation:" -ForegroundColor Yellow
+if ($ps2exeModule) {
+    $testScript = Join-Path $env:TEMP "test-ps2exe.ps1"
+    $testOutput = Join-Path $env:TEMP "test-ps2exe.exe"
+    @'
+Write-Host "PS2EXE test successful"
+'@ | Out-File $testScript -Encoding UTF8
 
-$testScript = Join-Path $env:TEMP "test-nsis.nsi"
-$testNsis | Out-File $testScript -Encoding ASCII
-
-try {
-    if (Test-Path $nsisPath) {
-        $null = & $nsisPath $testScript 2>&1
-        if (Test-Path (Join-Path $env:TEMP "test.exe")) {
-            Write-Host "  ✓ NSIS can compile scripts successfully" -ForegroundColor Green
-            Remove-Item (Join-Path $env:TEMP "test.exe") -Force
+    try {
+        Invoke-ps2exe -inputFile $testScript -outputFile $testOutput -noConsole
+        if (Test-Path $testOutput) {
+            Write-Host "  ✓ PS2EXE can compile scripts successfully" -ForegroundColor Green
+            Remove-Item $testOutput -Force
         } else {
-            Write-Host "  ✗ NSIS compilation test failed" -ForegroundColor Red
+            Write-Host "  ✗ PS2EXE compilation test failed" -ForegroundColor Red
         }
+    } catch {
+        Write-Host "  ✗ PS2EXE test failed: $($_.Exception.Message)" -ForegroundColor Red
+    } finally {
+        if (Test-Path $testScript) { Remove-Item $testScript -Force }
     }
-} catch {
-    Write-Host "  ✗ NSIS test failed: $($_.Exception.Message)" -ForegroundColor Red
-} finally {
-    if (Test-Path $testScript) {
-        Remove-Item $testScript -Force
-    }
+} else {
+    Write-Host "  ⚠ PS2EXE not installed — skipping compilation test" -ForegroundColor Yellow
 }
 
 # 7. Disk Space
@@ -182,22 +160,16 @@ if ($drive) {
 
 # 8. Test Silent Mode
 Write-Host "`n🤫 Silent Mode Test:" -ForegroundColor Yellow
-$outputExe = Join-Path $OutputDir "VC_Redist_AIO_Offline.exe"
+$outputExe = Join-Path $OutputDir "vcredist-aio.exe"
 if (Test-Path $outputExe) {
     Write-Host "  Testing silent installation mode..."
-    
-    # Create temporary test directory
-    $testDir = Join-Path $env:TEMP "vcredist-silent-test"
-    New-Item -ItemType Directory -Path $testDir -Force | Out-Null
-    
-    try {
-        # Note: Full silent test would actually install packages
-        # Here we just verify the installer accepts /S parameter
-        Write-Host "  ℹ Silent mode can be tested with: $outputExe /S" -ForegroundColor Gray
-        Write-Host "  ℹ Log will be created in: %TEMP%\vcredist-install-*.log" -ForegroundColor Gray
-        
-        # Check if NSIS script has silent detection
-        $nsisScript = Join-Path $OutputDir "installer.nsi"
+    Write-Host "  ℹ Silent mode can be tested with: $outputExe /S" -ForegroundColor Gray
+    Write-Host "  ℹ Log will be created in: %TEMP%\vcredist-install-*.log" -ForegroundColor Gray
+} else {
+    Write-Host "  ℹ No EXE found — build first, then test with: vcredist-aio.exe /S" -ForegroundColor Gray
+}
+
+Write-Host "`n✅ Diagnostics complete" -ForegroundColor Green
         if (Test-Path $nsisScript) {
             $scriptContent = Get-Content $nsisScript -Raw
             if ($scriptContent -match '\$\{If\}\s+\$\{Silent\}') {
