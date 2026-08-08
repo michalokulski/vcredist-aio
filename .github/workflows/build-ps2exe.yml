@@ -58,6 +58,15 @@ jobs:
           Write-Host "Current directory contents:"
           Get-ChildItem -Recurse
 
+      - name: Populate package versions from Winget
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          Write-Host "Querying Winget for latest package versions..."
+          & ./automation/update-check.ps1 -PackagesFile packages.json
+          Write-Host "Package versions populated."
+
       - name: Build EXE using PS2EXE (single downloader)
         id: build
         shell: pwsh
