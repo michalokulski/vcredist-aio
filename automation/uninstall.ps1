@@ -100,7 +100,7 @@ function Write-Log {
     )
     $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
     $entry = "[$ts] [$Level] $Message"
-    try { Add-Content -Path $script:LogFile -Value $entry -ErrorAction Stop } catch {}
+    try { Add-Content -Path $script:LogFile -Value $entry -ErrorAction Stop } catch { Write-Verbose "Log write failed: $_" }
     if (-not $NoConsole -and -not $Silent) {
         $color = switch ($Level) {
             'ERROR'   { 'Red' }    'WARN'    { 'Yellow' }
@@ -211,24 +211,24 @@ function Uninstall-VCRedistPackage {
     $script:processedPackages[$cmd] = $true
 
     try {
-        $exe = ""; $args = ""
-        if ($cmd -match '^"([^"]+)"\s*(.*)$')      { $exe = $matches[1]; $args = $matches[2] }
-        elseif ($cmd -match '^([^\s]+)\s*(.*)$')   { $exe = $matches[1]; $args = $matches[2] }
+        $exe = ""; $arguments = ""
+        if ($cmd -match '^"([^"]+)"\s*(.*)$')      { $exe = $matches[1]; $arguments = $matches[2] }
+        elseif ($cmd -match '^([^\s]+)\s*(.*)$')   { $exe = $matches[1]; $arguments = $matches[2] }
         else                                        { $exe = $cmd }
 
         # Ensure silent flags
         if (-not $Package.QuietUninstallString) {
             if ($exe -match "msiexec") {
-                if ($args -notmatch "/quiet|/qn") { $args += " /quiet /norestart" }
+                if ($arguments -notmatch "/quiet|/qn") { $arguments += " /quiet /norestart" }
             } else {
-                if ($args -notmatch "/quiet|/S\b") { $args += " /quiet /norestart" }
+                if ($arguments -notmatch "/quiet|/S\b") { $arguments += " /quiet /norestart" }
             }
         }
 
-        Write-Log "  Exec: $exe $args" -Level DEBUG
+        Write-Log "  Exec: $exe $arguments" -Level DEBUG
         $winStyle = if ($ShowUninstallerWindows) { 'Normal' } else { 'Hidden' }
         $t0 = Get-Date
-        $proc = Start-Process -FilePath $exe -ArgumentList $args -Wait -PassThru -WindowStyle $winStyle
+        $proc = Start-Process -FilePath $exe -ArgumentList $arguments -Wait -PassThru -WindowStyle $winStyle
         $elapsed = (Get-Date) - $t0
         $code = $proc.ExitCode
 

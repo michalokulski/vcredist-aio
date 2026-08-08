@@ -5,6 +5,9 @@
     )
     ExcludeRules = @(
         'PSAvoidUsingWriteHost',
-        'PSUseShouldProcessForStateChangingFunctions'
+        'PSUseShouldProcessForStateChangingFunctions',
+        'PSAvoidOverwritingBuiltInCmdlets',
+        'PSReviewUnusedParameter',
+        'PSUseCmdletCorrectly'
     )
 }

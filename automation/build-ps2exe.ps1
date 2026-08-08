@@ -297,7 +297,7 @@ if (-not $canReusePackages) {
   }
 
   # cleanup temporary downloads
-  try { if (Test-Path $downloadDir) { Remove-Item -Path $downloadDir -Recurse -Force -ErrorAction SilentlyContinue } } catch {}
+  try { if (Test-Path $downloadDir) { Remove-Item -Path $downloadDir -Recurse -Force -ErrorAction SilentlyContinue } } catch { Write-Verbose "Cleanup skipped: $_" }
 }
 
 Write-Host "`n📦 Downloaded $($downloadedFiles.Count) packages"
@@ -325,9 +325,9 @@ $uninstallCandidatePaths = @(
 )
 
 $installCandidates = @()
-foreach ($p in $installCandidatePaths) { if (Test-Path $p) { try { $installCandidates += (Resolve-Path $p -ErrorAction Stop).Path } catch {} } }
+foreach ($p in $installCandidatePaths) { if (Test-Path $p) { try { $installCandidates += (Resolve-Path $p -ErrorAction Stop).Path } catch { Write-Verbose "Resolve-Path failed for $p : $_" } } }
 $uninstallCandidates = @()
-foreach ($p in $uninstallCandidatePaths) { if (Test-Path $p) { try { $uninstallCandidates += (Resolve-Path $p -ErrorAction Stop).Path } catch {} } }
+foreach ($p in $uninstallCandidatePaths) { if (Test-Path $p) { try { $uninstallCandidates += (Resolve-Path $p -ErrorAction Stop).Path } catch { Write-Verbose "Resolve-Path failed for $p : $_" } } }
 
 if ($installCandidates.Count -eq 0 -or $uninstallCandidates.Count -eq 0) {
   Write-Error "❌ Could not find install.ps1 or uninstall.ps1 in expected locations."
@@ -439,7 +439,7 @@ $bootstrap | Out-File -FilePath $bootstrapFile -Encoding UTF8 -Force
 try {
   $bf = Get-Item $bootstrapFile -ErrorAction Stop
   if ($VerboseBuild.IsPresent) { Write-Host "[debug] Wrote bootstrap: $bootstrapFile ($([math]::Round($bf.Length/1KB,2)) KB)" -ForegroundColor DarkYellow }
-} catch {}
+} catch { Write-Verbose "Bootstrap file check skipped: $_" }
 
 ### ---- RUN PS2EXE ----
 
@@ -493,7 +493,7 @@ if ($VerboseBuild.IsPresent) { Write-Host "[debug] cleanup attempted for stage a
 ## Locate output EXE (prefer OutputDir) and validate
 $outputCandidates = @()
 $outputCandidates += (Join-Path $OutputDir $Output)
-try { $resolved = (Resolve-Path $Output -ErrorAction SilentlyContinue).Path; if ($resolved) { $outputCandidates += $resolved } } catch {}
+try { $resolved = (Resolve-Path $Output -ErrorAction SilentlyContinue).Path; if ($resolved) { $outputCandidates += $resolved } } catch { Write-Verbose "Resolve-Path failed for $Output : $_" }
 
 $exePath = $null
 foreach ($c in $outputCandidates) {

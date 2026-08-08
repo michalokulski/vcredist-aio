@@ -112,7 +112,7 @@ function Write-Log {
     )
     $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
     $logEntry = "[$timestamp] [$Level] $Message"
-    try { Add-Content -Path $script:LogFile -Value $logEntry -ErrorAction Stop } catch {}
+    try { Add-Content -Path $script:LogFile -Value $logEntry -ErrorAction Stop } catch { Write-Verbose "Log write failed: $_" }
     if (-not $NoConsole -and -not $Silent) {
         $color = switch ($Level) {
             'ERROR'   { 'Red' }
@@ -126,7 +126,7 @@ function Write-Log {
 }
 
 function Write-LogBlank {
-    try { Add-Content -Path $script:LogFile -Value "" -ErrorAction Stop } catch {}
+    try { Add-Content -Path $script:LogFile -Value "" -ErrorAction Stop } catch { Write-Verbose "Log write failed: $_" }
     if (-not $Silent) { Write-Host "" }
 }
 
@@ -200,7 +200,7 @@ function Get-InstalledVCRedistMap {
                     }
                 }
             }
-        } catch { }
+        } catch { Write-Verbose "Registry scan skipped: $_" }
     }
 
     $script:InstalledVCCache = $map
@@ -315,7 +315,7 @@ function Write-SystemInfo {
     }
 }
 
-function Test-AdministratorPrivileges {
+function Test-AdministratorPrivilege {
     $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
     $isAdmin = $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if (-not $isAdmin) {
@@ -368,7 +368,7 @@ function Get-PackageManifest {
         # Determine year for sort order
         $year = 0
         if ($fileName -match '2015Plus') { $year = 2015 }
-        elseif ($fileName -match '(\d{4})') { try { $year = [int]$matches[1] } catch {} }
+        elseif ($fileName -match '(\d{4})') { try { $year = [int]$matches[1] } catch { Write-Verbose "Year parse failed: $_" } }
 
         # Determine arch sort key (x86=0, x64=1)
         $archSort = if ($fileName -match 'x64') { 1 } else { 0 }
@@ -535,7 +535,7 @@ Write-SystemInfo
 # Phase 1: Validation
 Write-LogHeader "Phase 1: Pre-Installation Validation"
 if (-not $SkipValidation) {
-    if (-not (Test-AdministratorPrivileges)) {
+    if (-not (Test-AdministratorPrivilege)) {
         Write-Log "Requires Administrator. Please re-run as Administrator." -Level ERROR
         exit 1
     }

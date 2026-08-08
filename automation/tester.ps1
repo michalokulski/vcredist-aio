@@ -18,7 +18,7 @@ if (!(Test-Path $InstallerExe)) {
     exit 1
 }
 
-function Run-Test {
+function Invoke-Test {
     param(
         [string]$Name,
         [string]$InstallerArgs = "",
@@ -86,19 +86,19 @@ function Run-Test {
 $results = @()
 
 # Always run silent install/uninstall tests
-$results += Run-Test -Name "install_silent" -InstallerArgs "/S /LOGDIR=`"$LogDir`"" -Desc "Silent install, all packages"
-$results += Run-Test -Name "install_silent-uninstall" -InstallerArgs "-Silent" -Desc "Uninstall after install_silent"
+$results += Invoke-Test -Name "install_silent" -InstallerArgs "/S /LOGDIR=`"$LogDir`"" -Desc "Silent install, all packages"
+$results += Invoke-Test -Name "install_silent-uninstall" -InstallerArgs "-Silent" -Desc "Uninstall after install_silent"
 
-$results += Run-Test -Name "install_filter" -InstallerArgs "/S /PACKAGES=2015+ /LOGDIR=`"$LogDir`"" -Desc "Silent install, 2015+ only"
-$results += Run-Test -Name "install_filter-uninstall" -InstallerArgs "-Silent" -Desc "Uninstall after install_filter"
+$results += Invoke-Test -Name "install_filter" -InstallerArgs "/S /PACKAGES=2015+ /LOGDIR=`"$LogDir`"" -Desc "Silent install, 2015+ only"
+$results += Invoke-Test -Name "install_filter-uninstall" -InstallerArgs "-Silent" -Desc "Uninstall after install_filter"
 
-$results += Run-Test -Name "install_customlog" -InstallerArgs "/S /LOGDIR=`"$LogDir`"" -Desc "Silent install, custom log dir"
-$results += Run-Test -Name "install_customlog-uninstall" -InstallerArgs "-Silent" -Desc "Uninstall after install_customlog"
+$results += Invoke-Test -Name "install_customlog" -InstallerArgs "/S /LOGDIR=`"$LogDir`"" -Desc "Silent install, custom log dir"
+$results += Invoke-Test -Name "install_customlog-uninstall" -InstallerArgs "-Silent" -Desc "Uninstall after install_customlog"
 
 if (-not $Auto) {
     # Only run interactive/manual tests if not in auto mode
-    $results += Run-Test -Name "install_interactive" -InstallerArgs "/LOGDIR=`"$LogDir`"" -Desc "Interactive install, all packages"
-    $results += Run-Test -Name "install_interactive-uninstall" -InstallerArgs "-Silent" -Desc "Uninstall after install_interactive"
+    $results += Invoke-Test -Name "install_interactive" -InstallerArgs "/LOGDIR=`"$LogDir`"" -Desc "Interactive install, all packages"
+    $results += Invoke-Test -Name "install_interactive-uninstall" -InstallerArgs "-Silent" -Desc "Uninstall after install_interactive"
 }
 
 # Generate summary report
