@@ -231,6 +231,7 @@ jobs:
           Built from [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs) manifests via PS2EXE.
           "@
 
+          $releaseNotes = $releaseNotes -replace '(?m)^ {10}'
           $releaseNotes | Out-File 'release-notes.md' -Encoding UTF8 -Force
           Write-Host 'Release notes generated'
 
