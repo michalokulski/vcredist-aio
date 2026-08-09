@@ -171,15 +171,18 @@ jobs:
         run: |
           $packagesJson = Get-Content packages.json -Raw | ConvertFrom-Json
           $version = '${{ steps.get-version.outputs.version }}'
+          $exeSize = '${{ steps.compute-sha.outputs.exe_size }}'
+          $exeSha = '${{ steps.compute-sha.outputs.exe_sha }}'
+          $zipSize = '${{ steps.compute-sha.outputs.zip_size }}'
+          $zipSha = '${{ steps.compute-sha.outputs.zip_sha }}'
 
-          # Try to get previous release for changelog
           $prevPackages = $null
           try {
             $prevTag = (gh release list --limit 1 --json tagName | ConvertFrom-Json).tagName
             if ($prevTag) {
               $prevJson = gh release view $prevTag --json body | ConvertFrom-Json
               $prevPackages = @{}
-              foreach ($line in ($prevJson.body -split [Environment]::NewLine)) {
+              foreach ($line in ($prevJson.body -split '\r?\n')) {
                 if ($line -match '^\|\s*`([^`]+)`\s*\|\s*`([^`]+)`') {
                   $prevPackages[$matches[1]] = $matches[2]
                 }
@@ -187,46 +190,47 @@ jobs:
             }
           } catch { Write-Host "Could not fetch previous release: $_" }
 
-          $notes = @()
-          $notes += "# VC Redist AIO — $version"
-          $notes += ""
-          $notes += "All-in-one offline installer for Microsoft Visual C++ Redistributables (2005–2022 + VSTOR)."
-          $notes += ""
-          $notes += "## 📦 Included Packages"
-          $notes += ""
-          $notes += "| Package | Version |"
-          $notes += "|---------|---------|"
-          foreach ($pkg in $packagesJson.packages) {
-            $change = ""
-            if ($prevPackages -and $prevPackages.ContainsKey($pkg.id)) {
-              if ($prevPackages[$pkg.id] -ne $pkg.version) {
-                $change = " *(updated)*"
-              }
+          $pkgTable = foreach ($pkg in $packagesJson.packages) {
+            $change = ''
+            if ($prevPackages -and $prevPackages.ContainsKey($pkg.id) -and $prevPackages[$pkg.id] -ne $pkg.version) {
+              $change = ' *(updated)*'
             }
-            $notes += "| ``$($pkg.id)`` | ``$($pkg.version)``$change |"
+            "| ``$($pkg.id)`` | ``$($pkg.version)``$change |"
           }
-          $notes += ""
-          $notes += "## 📥 Download"
-          $notes += ""
-          $notes += "| Asset | Size | SHA256 |"
-          $notes += "|-------|------|--------|"
-          $notes += "| **VC_Redist_AIO_Offline.exe** | ${{ steps.compute-sha.outputs.exe_size }} MB | ``${{ steps.compute-sha.outputs.exe_sha }}`` |"
-          $notes += "| **vc_redist_aio_offline.zip** | ${{ steps.compute-sha.outputs.zip_size }} MB | ``${{ steps.compute-sha.outputs.zip_sha }}`` |"
-          $notes += ""
-          $notes += "## 🚀 Quick Start"
-          $notes += ""
-          $notes += "```cmd"
-          $notes += ":: Silent install (run as Administrator)"
-          $notes += "VC_Redist_AIO_Offline.exe /S"
-          $notes += ""
-          $notes += ":: Or extract and run manually"
-          $notes += "powershell -ExecutionPolicy Bypass -File install.ps1"
-          $notes += "```"
-          $notes += ""
-          $notes += 'Built from [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs) manifests via PS2EXE.'
 
-          $notes -join [Environment]::NewLine | Out-File 'release-notes.md' -Encoding UTF8 -Force
-          Write-Host "Release notes generated"
+          $releaseNotes = @"
+          # VC Redist AIO — $version
+
+          All-in-one offline installer for Microsoft Visual C++ Redistributables (2005–2022 + VSTOR).
+
+          ## Included Packages
+
+          | Package | Version |
+          |---------|---------|
+          $($pkgTable -join [char]10)
+
+          ## Download
+
+          | Asset | Size | SHA256 |
+          |-------|------|--------|
+          | **VC_Redist_AIO_Offline.exe** | $exeSize MB | ``$exeSha`` |
+          | **vc_redist_aio_offline.zip** | $zipSize MB | ``$zipSha`` |
+
+          ## Quick Start
+
+          ```
+          REM Silent install (run as Administrator)
+          VC_Redist_AIO_Offline.exe /S
+
+          REM Or extract and run manually
+          powershell -ExecutionPolicy Bypass -File install.ps1
+          ```
+
+          Built from [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs) manifests via PS2EXE.
+          "@
+
+          $releaseNotes | Out-File 'release-notes.md' -Encoding UTF8 -Force
+          Write-Host 'Release notes generated'
 
       - name: Upload EXE and checksum bundle
         if: steps.compute-metadata.outputs.noexe != '1'
