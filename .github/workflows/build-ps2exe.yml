@@ -179,7 +179,7 @@ jobs:
             if ($prevTag) {
               $prevJson = gh release view $prevTag --json body | ConvertFrom-Json
               $prevPackages = @{}
-              foreach ($line in ($prevJson.body -split "`n")) {
+              foreach ($line in ($prevJson.body -split [Environment]::NewLine)) {
                 if ($line -match '^\|\s*`([^`]+)`\s*\|\s*`([^`]+)`') {
                   $prevPackages[$matches[1]] = $matches[2]
                 }
@@ -225,7 +225,7 @@ jobs:
           $notes += ""
           $notes += 'Built from [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs) manifests via PS2EXE.'
 
-          $notes -join "`n" | Out-File 'release-notes.md' -Encoding UTF8 -Force
+          $notes -join [Environment]::NewLine | Out-File 'release-notes.md' -Encoding UTF8 -Force
           Write-Host "Release notes generated"
 
       - name: Upload EXE and checksum bundle
