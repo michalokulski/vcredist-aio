@@ -168,6 +168,8 @@ jobs:
         if: steps.compute-metadata.outputs.noexe != '1'
         id: release-notes
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $packagesJson = Get-Content packages.json -Raw | ConvertFrom-Json
           $version = '${{ steps.get-version.outputs.version }}'
